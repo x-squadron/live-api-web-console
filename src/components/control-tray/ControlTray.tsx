@@ -202,6 +202,9 @@ function ControlTray({
             ref={connectButtonRef}
             className={cn("action-button connect-toggle", { connected })}
             onClick={connected ? disconnect : connect}
+            // NOTE: this is a special case to prevent the connect from being clicked 
+            // before both topic and style are selected
+            disabled={!connected}
           >
             <span className="material-symbols-outlined filled">
               {connected ? "pause" : "play_arrow"}

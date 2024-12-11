@@ -7,73 +7,28 @@ We have provided several example applications on other branches of this reposito
 - [demos/GenExplainer](https://github.com/google-gemini/multimodal-live-api-web-console/tree/demos/genexplainer)
 - [demos/GenWeather](https://github.com/google-gemini/multimodal-live-api-web-console/tree/demos/genweather)
 
-Below is an example of an entire application that will use Google Search grounding and then render graphs using [vega-embed](https://github.com/vega/vega-embed):
+# GenExplainer
+
+GenExplainer is an example of how to use the Multimodal Live API. Pick a topic (like black holes or DNA) and choose how you want it explained (maybe by a pirate or a chef). The app uses Gemini to generate bespoke explanations.
+
+Since this is a Live API that uses bidirectional streaming, the app is able to send a request to the AI and receive a response in near real-time.
+
+The AI request happens in `/src/components/explainer-picker/ExplainerPicker.tsx`, where we handle your choices and talk to the AI. Here's the key part:
 
 ```typescript
-import { type FunctionDeclaration, SchemaType } from "@google/generative-ai";
-import { useEffect, useRef, useState, memo } from "react";
-import vegaEmbed from "vega-embed";
-import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
-
-export const declaration: FunctionDeclaration = {
-  name: "render_altair",
-  description: "Displays an altair graph in json format.",
-  parameters: {
-    type: SchemaType.OBJECT,
-    properties: {
-      json_graph: {
-        type: SchemaType.STRING,
-        description:
-          "JSON STRING representation of the graph to render. Must be a string, not a json object",
-      },
-    },
-    required: ["json_graph"],
-  },
+const handleSelection = (type: 'topic' | 'style', label: string) => {
+  // When you pick a topic or style...
+  if (isStreaming && newTopic && newStyle) {
+    // Send it to the Multimodal Live API 
+    client.send([{
+      text: `Explain ${newTopic} in the style of ${newStyle}. 
+      Don't change your style until I ask you to.`,
+    }]);
+  }
 };
-
-export function Altair() {
-  const [jsonString, setJSONString] = useState<string>("");
-  const { client, setConfig } = useLiveAPIContext();
-
-  useEffect(() => {
-    setConfig({
-      model: "models/gemini-v3-s-test",
-      systemInstruction: {
-        parts: [
-          {
-            text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.',
-          },
-        ],
-      },
-      tools: [{ googleSearch: {} }, { functionDeclarations: [declaration] }],
-    });
-  }, [setConfig]);
-
-  useEffect(() => {
-    client.on("toolcall", (toolCall) => {
-      console.log(`got toolcall`, toolCall);
-      const fc = toolCall.functionCalls.find(
-        (fc) => fc.name === declaration.name
-      );
-      if (fc) {
-        const str = (fc.args as any).json_graph;
-        setJSONString(str);
-      }
-    });
-  }, [client]);
-
-  const embedRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (embedRef.current && jsonString) {
-      vegaEmbed(embedRef.current, JSON.parse(jsonString));
-    }
-  }, [embedRef, jsonString]);
-  return <div className="vega-embed" ref={embedRef} />;
-}
 ```
 
-## development
+## Development
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 Project consists of:

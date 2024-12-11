@@ -116,9 +116,11 @@
 
   .disabled .action-button,
   .action-button.disabled {
-    background: rgba(0, 0, 0, 0);
-    border: 1px solid var(--Neutral-30, #404547);
+    background: rgba(0, 0, 0, 0) !important;
+    border: 1px solid var(--Neutral-30);
     color: var(--Neutral-30);
+    cursor: not-allowed;
+    pointer-events: none;
   }
 
   .connection-container {
@@ -133,6 +135,14 @@
       border: 1px solid var(--Neutral-30);
       background: var(--Neutral-5);
       padding: 10px;
+
+      .connect-toggle:disabled {
+        background: rgba(0, 0, 0, 0) !important;
+        border: 1px solid var(--Neutral-30);
+        color: var(--Neutral-30);
+        cursor: not-allowed;
+        pointer-events: none;
+      }
     }
 
     .text-indicator {
@@ -152,6 +162,7 @@
 .actions-nav {
   background: var(--Neutral-5);
   border: 1px solid var(--Neutral-30);
+  color: var(--Neutral-30);
   border-radius: 27px;
   display: inline-flex;
   gap: 12px;

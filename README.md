@@ -7,73 +7,27 @@ We have provided several example applications on other branches of this reposito
 - [demos/GenExplainer](https://github.com/google-gemini/multimodal-live-api-web-console/tree/demos/genexplainer)
 - [demos/GenWeather](https://github.com/google-gemini/multimodal-live-api-web-console/tree/demos/genweather)
 
-Below is an example of an entire application that will use Google Search grounding and then render graphs using [vega-embed](https://github.com/vega/vega-embed):
+# GenWeather
+
+GenWeather demonstrates how to use the Multimodal Live API to get creative weather reports. Pick any location on the map and choose a character style (like a pirate or a yogi guru) to get a unique weather report. The app combines real weather data with Gemini's creative abilities to generate engaging weather descriptions.
+
+Since this is a Live API that uses bidirectional streaming, the app can send weather updates and receive new descriptions in near real-time as you change locations or character styles.
+
+The AI interaction happens in `/src/components/weather-picker/WeatherPicker.tsx`, where we fetch weather data and communicate with the AI. Here's the key part:
 
 ```typescript
-import { type FunctionDeclaration, SchemaType } from "@google/generative-ai";
-import { useEffect, useRef, useState, memo } from "react";
-import vegaEmbed from "vega-embed";
-import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
-
-export const declaration: FunctionDeclaration = {
-  name: "render_altair",
-  description: "Displays an altair graph in json format.",
-  parameters: {
-    type: SchemaType.OBJECT,
-    properties: {
-      json_graph: {
-        type: SchemaType.STRING,
-        description:
-          "JSON STRING representation of the graph to render. Must be a string, not a json object",
-      },
-    },
-    required: ["json_graph"],
-  },
+const sendWeatherPrompt = (location: string, style: string, weather: WeatherData) => {
+  if (!client || !connected) return;
+  
+  const prompt = `Describe the weather in ${location} in the style of ${style}. 
+  Current conditions: ${weather.weather[0].description}, temperature: ${weather.main.temp}°C, humidity: ${weather.main.humidity}%. 
+  Stay in character until asked to change. Announce weather location and time.`;
+  
+  client.send([{ text: prompt }]);
 };
-
-export function Altair() {
-  const [jsonString, setJSONString] = useState<string>("");
-  const { client, setConfig } = useLiveAPIContext();
-
-  useEffect(() => {
-    setConfig({
-      model: "models/gemini-v3-s-test",
-      systemInstruction: {
-        parts: [
-          {
-            text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.',
-          },
-        ],
-      },
-      tools: [{ googleSearch: {} }, { functionDeclarations: [declaration] }],
-    });
-  }, [setConfig]);
-
-  useEffect(() => {
-    client.on("toolcall", (toolCall) => {
-      console.log(`got toolcall`, toolCall);
-      const fc = toolCall.functionCalls.find(
-        (fc) => fc.name === declaration.name
-      );
-      if (fc) {
-        const str = (fc.args as any).json_graph;
-        setJSONString(str);
-      }
-    });
-  }, [client]);
-
-  const embedRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (embedRef.current && jsonString) {
-      vegaEmbed(embedRef.current, JSON.parse(jsonString));
-    }
-  }, [embedRef, jsonString]);
-  return <div className="vega-embed" ref={embedRef} />;
-}
 ```
 
-## development
+## Development
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 Project consists of:

@@ -1,0 +1,101 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono&display=swap');
+
+:root {
+  --font-primary: 'Space Mono', monospace;
+  --font-secondary: 'Google Sans', sans-serif;
+  --color-bg: #181A1B;
+  --color-text: #ffffff;
+  --color-text-muted: #C3C6C7;
+  --color-muted: #cccccc;
+  --color-border: #404547;
+  --color-highlight: #ffffff;
+  --color-hover: #4a4a4a;
+  --color-error: #ff4444;
+  --color-error-border: #ff0000;
+}
+
+.weather-picker {
+  font-family: var(--font-primary);
+  color: var(--color-text);
+  max-width: 800px;
+  width: 100%;
+  margin: -48px auto 0;
+  position: relative;
+
+  .title {
+    font-size: 24px;
+    font-weight: 400;
+    margin-bottom: 48px;
+  }
+
+  .section-label {
+    color: var(--color-text);
+    font-size: 14px;
+    font-family: var(--font-secondary);
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+
+  .content-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 36px;
+  }
+
+  .right-section {
+    width: 100%;
+  }
+
+  .persona-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 90%;
+
+    .topic-chip {
+      margin: 0;
+
+      &:nth-child(2n) {
+        margin-right: 0;
+      }
+    }
+  }
+
+  .start-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 32px;
+    padding: 0 14px;
+    background: var(--Blue-500);
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 13px;
+    width: fit-content;
+    margin-top: 4rem;
+    font-family: "Space Mono", monospace;
+
+    &:hover:not(:disabled) {
+      background: #9EC5FF;
+    }
+    &:active:not(:disabled) {
+      background: var(--Blue-800);
+    }
+
+    &:disabled,
+    &.disabled {
+      background: var(--Neutral-10);
+      border: 1px solid #E1E2E3;
+      color: var(--Neutral-60);
+      cursor: not-allowed;
+      opacity: 0.2;
+    }
+
+    .emoji {
+      font-size: 1.1em;
+    }
+  }
+} 

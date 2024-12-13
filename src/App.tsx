@@ -24,7 +24,7 @@ import Footer from "./components/footer/Footer";
 
 const API_KEY = process.env.REACT_APP_GEMINI_API_KEY as string;
 if (typeof API_KEY !== "string") {
-  throw new Error("set REACT_APP_GEMINI_APIK_KEY in .env");
+  throw new Error("set REACT_APP_GEMINI_API_KEY in .env");
 }
 
 const host = "autopush-generativelanguage.googleapis.com";

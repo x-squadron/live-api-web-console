@@ -223,51 +223,6 @@ const filters: Record<LoggerFilterType, (log: StreamingLog) => boolean> = {
 };
 
 const component = (log: StreamingLog) => {
-  // Check if the log message is of a known type and has content before rendering
-  const isKnownAndHasContent = (): boolean => {
-    if (typeof log.message === "string") {
-      return true; // Plain text always has content
-    }
-    if (isClientContentMessage(log.message)) {
-      return (
-        log.message.clientContent.turns.length > 0 &&
-        log.message.clientContent.turns.some(
-          (turn) =>
-            turn.parts.length > 0 &&
-            turn.parts.some((part) => part.text && part.text !== "\n")
-        )
-      );
-    }
-    if (isToolCallMessage(log.message)) {
-      return log.message.toolCall.functionCalls.length > 0;
-    }
-    if (isToolCallCancellationMessage(log.message)) {
-      return log.message.toolCallCancellation.ids.length > 0;
-    }
-    if (isToolResponseMessage(log.message)) {
-      return log.message.toolResponse.functionResponses.length > 0;
-    }
-    if (isServerContenteMessage(log.message)) {
-      const { serverContent } = log.message;
-      if (isInterrupted(serverContent) || isTurnComplete(serverContent)) {
-        return true; // These always have content by definition (the status)
-      }
-      if (isModelTurn(serverContent)) {
-        return (
-          serverContent.modelTurn.parts.length > 0 &&
-          serverContent.modelTurn.parts.some(
-            (part) => part.text && part.text !== "\n"
-          )
-        );
-      }
-    }
-    return false; // Default to not showing if not a known type
-  };
-
-  if (!isKnownAndHasContent()) {
-    return null; // Don't render anything if the log is not of a known type or is empty
-  }
-
   if (typeof log.message === "string") {
     return PlainTextMessage;
   }
@@ -307,15 +262,8 @@ export default function Logger({ filter = "none" }: LoggerProps) {
     <div className="logger">
       <ul className="logger-list">
         {logs.filter(filterFn).map((log, key) => {
-          const MessageComponent = component(log);
           return (
-            MessageComponent && (
-              <LogEntry
-                MessageComponent={MessageComponent}
-                log={log}
-                key={key}
-              />
-            )
+            <LogEntry MessageComponent={component(log)} log={log} key={key} />
           );
         })}
       </ul>

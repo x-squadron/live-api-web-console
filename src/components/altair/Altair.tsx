@@ -51,7 +51,7 @@ function AltairComponent() {
       systemInstruction: {
         parts: [
           {
-            text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.',
+            text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.', //a2a
           },
         ],
       },
@@ -67,7 +67,7 @@ function AltairComponent() {
     const onToolCall = (toolCall: ToolCall) => {
       console.log(`got toolcall`, toolCall);
       const fc = toolCall.functionCalls.find(
-        (fc) => fc.name === declaration.name,
+        (fc) => fc.name === declaration.name
       );
       if (fc) {
         const str = (fc.args as any).json_graph;
@@ -84,7 +84,7 @@ function AltairComponent() {
                 id: fc.id,
               })),
             }),
-          200,
+          200
         );
       }
     };
@@ -101,7 +101,12 @@ function AltairComponent() {
       vegaEmbed(embedRef.current, JSON.parse(jsonString));
     }
   }, [embedRef, jsonString]);
-  return <div className="vega-embed" ref={embedRef} />;
+  return (
+    <>
+      <div className="vega-embed" ref={embedRef} />
+      {jsonString && "Hello Youssef"}
+    </>
+  );
 }
 
 export const Altair = memo(AltairComponent);

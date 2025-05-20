@@ -16,6 +16,7 @@
 
 import { createContext, FC, ReactNode, useContext } from "react";
 import { useLiveAPI, UseLiveAPIResults } from "../hooks/use-live-api";
+import { Tool } from "@google/generative-ai";
 
 const LiveAPIContext = createContext<UseLiveAPIResults | undefined>(undefined);
 
@@ -23,12 +24,14 @@ export type LiveAPIProviderProps = {
   children: ReactNode;
   url?: string;
   apiKey: string;
+  defaultTools: Tool[];
 };
 
 export const LiveAPIProvider: FC<LiveAPIProviderProps> = ({
   url,
   apiKey,
   children,
+  defaultTools,
 }) => {
   const liveAPI = useLiveAPI({ url, apiKey });
 

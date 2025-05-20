@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.scss";
 import { LiveAPIProvider } from "./contexts/LiveAPIContext";
 import SidePanel from "./components/side-panel/SidePanel";
 import { Altair } from "./components/altair/Altair";
 import ControlTray from "./components/control-tray/ControlTray";
 import cn from "classnames";
+import { GenList } from "./components/genlist/GenList";
+import { getDefaultTools } from "./ToolsCalling";
+import { FunctionDeclaration, Tool } from "@google/generative-ai";
 
 const API_KEY = process.env.REACT_APP_GEMINI_API_KEY as string;
 if (typeof API_KEY !== "string") {
@@ -36,16 +39,25 @@ function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   // either the screen capture, the video or null, if null we hide it
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
+  const [defaultTools, setDefaultTools] = useState<Tool[]>([]);
+
+  // useEffect(() => {
+  //   (async () => {
+  //     const defaultTools = await getDefaultTools();
+  //     setDefaultTools(defaultTools);
+  //   })();
+  // }, []);
 
   return (
     <div className="App">
-      <LiveAPIProvider url={uri} apiKey={API_KEY}>
+      <LiveAPIProvider url={uri} apiKey={API_KEY} defaultTools={defaultTools}>
         <div className="streaming-console">
           <SidePanel />
           <main>
             <div className="main-app-area">
               {/* APP goes here */}
               <Altair />
+              <GenList />
               <video
                 className={cn("stream", {
                   hidden: !videoRef.current || !videoStream,

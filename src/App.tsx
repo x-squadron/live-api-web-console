@@ -22,9 +22,17 @@ import { Altair } from "./components/altair/Altair";
 import ControlTray from "./components/control-tray/ControlTray";
 import cn from "classnames";
 import { GenList } from "./components/genlist/GenList";
-import { getDefaultTools } from "./ToolsCalling";
-import { LiveConfig } from "./multimodal-live-types";
+import {
+  LiveConfig,
+  LiveFunctionResponse,
+  ToolCall,
+  ToolResponse,
+} from "./multimodal-live-types";
 import { isFunctionDeclarationsTool } from "./utils/isFunctionDeclarationsTool";
+import { OpenAIToolSet } from "composio-core";
+import { FunctionToolCallMapper } from "./mappers/FunctionToolCallMapper";
+import { getDefaultTools } from "./tool-calling/ToolsCalling";
+import { MCP_ACTIONS } from "./tool-calling/mcp-actions";
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture
@@ -33,14 +41,24 @@ function App() {
   // either the screen capture, the video or null, if null we hide it
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
 
-  const { setConfig } = useLiveAPIContext();
+  const { client, setConfig } = useLiveAPIContext();
 
   useEffect(() => {
     console.log("[App] init");
 
+    const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY;
+    const composioToolset = new OpenAIToolSet({
+      apiKey: composioApiKey,
+    });
+
     (async () => {
       console.log("[App] fetching composio tools");
-      const defaultTools = await getDefaultTools();
+      const defaultTools = await getDefaultTools(composioToolset, [
+        "GOOGLECALENDAR_CREATE_EVENT",
+        "GOOGLECALENDAR_DELETE_EVENT",
+        "GOOGLECALENDAR_FIND_EVENT",
+        "GOOGLECALENDAR_FIND_FREE_SLOTS",
+      ]);
       setConfig((config: LiveConfig) => {
         const tools = [...(config.tools ?? [])]
           .filter(isFunctionDeclarationsTool)
@@ -70,7 +88,8 @@ function App() {
 
         return {
           ...config,
-          model: "models/gemini-2.0-flash-exp",
+          // model: "models/gemini-2.5-flash-exp",
+          model: "models/gemini-2.5-flash-preview-native-audio-dialog",
           generationConfig: {
             responseModalities: "audio", // switch to "audio" for audio out
             speechConfig: {
@@ -78,12 +97,76 @@ function App() {
             },
           },
           systemInstruction: {
-            parts: [...(config.systemInstruction?.parts ?? [])],
+            parts: [
+              ...(config.systemInstruction?.parts ?? []),
+              {
+                text: `You are a helpfull assistant that can access and manage my calendar, please use the tool whenever needed
+                       • "GOOGLECALENDAR_CREATE_EVENT"
+                       • "GOOGLECALENDAR_DELETE_EVENT"
+                       • "GOOGLECALENDAR_FIND_EVENT"
+                       • "GOOGLECALENDAR_FIND_FREE_SLOTS"
+                `,
+              },
+            ],
           },
           tools: [{ functionDeclarations: uniqueTools }],
         };
       });
     })();
+
+    const onToolCall = async (toolCall: ToolCall) => {
+      const fCalls = toolCall.functionCalls;
+      const functionResponses: LiveFunctionResponse[] = [];
+
+      if (fCalls.length > 0) {
+        for (const fCall of fCalls) {
+          let functionResponse = {
+            id: fCall.id,
+            name: fCall.name,
+            response: {
+              result: { string_value: `${fCall.name} OK.` },
+              data: "",
+            },
+          };
+          let handled = true;
+
+          switch (fCall.name as MCP_ACTIONS) {
+            case "GOOGLECALENDAR_FIND_EVENT":
+            case "GOOGLECALENDAR_FIND_FREE_SLOTS":
+            case "GOOGLECALENDAR_CREATE_EVENT":
+            case "GOOGLECALENDAR_DELETE_EVENT": {
+              const response = await composioToolset.executeToolCall(
+                FunctionToolCallMapper.fromLiveFunctionCall(fCall)
+              );
+              functionResponse.response.data = response;
+              break;
+            }
+            default:
+              handled = false;
+              break;
+          }
+          if (handled && functionResponse) {
+            console.log(`[App] got toolcall`, toolCall, functionResponse);
+            functionResponses.push(functionResponse);
+          }
+        }
+
+        console.log(`[App] functionResponses:`, functionResponses);
+        if (functionResponses.length) {
+          // Send tool responses back to the model
+          const toolResponse: ToolResponse = {
+            functionResponses: functionResponses,
+          };
+          console.log(`[App] send tool response`, toolResponse);
+          client.sendToolResponse(toolResponse);
+        }
+      }
+    };
+
+    client.on("toolcall", onToolCall);
+    return () => {
+      client.off("toolcall", onToolCall);
+    };
   }, [setConfig]);
 
   return (

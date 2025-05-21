@@ -95,27 +95,29 @@ function AltairComponent() {
 
   useEffect(() => {
     const onToolCall = (toolCall: ToolCall) => {
-      console.log(`got toolcall`, toolCall);
+      // console.log(`got toolcall`, toolCall);
+
       const fc = toolCall.functionCalls.find(
         (fc) => fc.name === declaration.name
       );
       if (fc) {
+        console.log(`[AltairComponent] got toolcall`, toolCall);
         const str = (fc.args as any).json_graph;
         setJSONString(str);
-      }
-      // send data for the response of your tool call
-      // in this case Im just saying it was successful
-      if (toolCall.functionCalls.length) {
-        setTimeout(
-          () =>
+
+        // send data for the response of your tool call
+        // in this case Im just saying it was successful
+        if (toolCall.functionCalls.length) {
+          setTimeout(() => {
+            console.log(`[AltairComponent] send tool response`);
             client.sendToolResponse({
               functionResponses: toolCall.functionCalls.map((fc) => ({
                 response: { output: { success: true } },
                 id: fc.id,
               })),
-            }),
-          200
-        );
+            });
+          }, 200);
+        }
       }
     };
     client.on("toolcall", onToolCall);

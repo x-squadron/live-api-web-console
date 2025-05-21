@@ -285,6 +285,8 @@ function GenListComponent() {
               result: { string_value: `${fCall.name} OK.` },
             },
           };
+          let handled = true;
+
           switch (fCall.name) {
             case "look_at_lists": {
               break;
@@ -317,17 +319,23 @@ function GenListComponent() {
               scrollToList(newList.id);
               break;
             }
+            default:
+              handled = false;
+              break;
           }
-          if (functionResponse) {
+          if (handled && functionResponse) {
+            console.log(`[GenListComponent] got toolcall`, toolCall);
             functionResponses.push(functionResponse);
           }
         });
 
-        // Send tool responses back to the model
-        const toolResponse: ToolResponse = {
-          functionResponses: functionResponses,
-        };
-        setToolResponse(toolResponse);
+        if (functionResponses.length > 0) {
+          // Send tool responses back to the model
+          const toolResponse: ToolResponse = {
+            functionResponses: functionResponses,
+          };
+          setToolResponse(toolResponse);
+        }
       }
     };
     setIsAwaitingFirstResponse(false);
@@ -359,6 +367,7 @@ function GenListComponent() {
           }
         ),
       };
+      console.log(`[GenListComponent] send tool response`, updatedToolResponse);
       client.sendToolResponse(updatedToolResponse);
       setToolResponse(null);
     }

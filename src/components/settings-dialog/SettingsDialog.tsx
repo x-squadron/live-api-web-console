@@ -7,14 +7,13 @@ import {
 } from "react";
 import "./settings-dialog.scss";
 import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
-import { LiveConfig } from "../../multimodal-live-types";
-import {
-  FunctionDeclaration,
-  FunctionDeclarationsTool,
-  Tool,
-} from "@google/generative-ai";
 import VoiceSelector from "./VoiceSelector";
 import ResponseModalitySelector from "./ResponseModalitySelector";
+import { FunctionDeclaration, LiveConnectConfig, Tool } from "@google/genai";
+
+type FunctionDeclarationsTool = Tool & {
+  functionDeclarations: FunctionDeclaration[];
+};
 
 export default function SettingsDialog() {
   const [open, setOpen] = useState(false);
@@ -32,19 +31,35 @@ export default function SettingsDialog() {
       .flat();
   }, [config]);
 
+  // system instructions can come in many types
   const systemInstruction = useMemo(() => {
-    const s = config.systemInstruction?.parts.map((p) => p.text).join();
-
-    return s;
+    if (!config.systemInstruction) {
+      return "";
+    }
+    if (typeof config.systemInstruction === "string") {
+      return config.systemInstruction;
+    }
+    if (Array.isArray(config.systemInstruction)) {
+      return config.systemInstruction
+        .map((p) => (typeof p === "string" ? p : p.text))
+        .join("\n");
+    }
+    if (
+      typeof config.systemInstruction === "object" &&
+      "parts" in config.systemInstruction
+    ) {
+      return (
+        config.systemInstruction.parts?.map((p) => p.text).join("\n") || ""
+      );
+    }
+    return "";
   }, [config]);
 
   const updateConfig: FormEventHandler<HTMLTextAreaElement> = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
-      const newConfig: LiveConfig = {
+      const newConfig: LiveConnectConfig = {
         ...config,
-        systemInstruction: {
-          parts: [{ text: event.target.value }],
-        },
+        systemInstruction: event.target.value,
       };
       setConfig(newConfig);
     },
@@ -53,7 +68,7 @@ export default function SettingsDialog() {
 
   const updateFunctionDescription = useCallback(
     (editedFdName: string, newDescription: string) => {
-      const newConfig: LiveConfig = {
+      const newConfig: LiveConnectConfig = {
         ...config,
         tools:
           config.tools?.map((tool) => {
@@ -124,7 +139,7 @@ export default function SettingsDialog() {
                     type="text"
                     defaultValue={fd.description}
                     onBlur={(e) =>
-                      updateFunctionDescription(fd.name, e.target.value)
+                      updateFunctionDescription(fd.name!, e.target.value)
                     }
                   />
                 </div>

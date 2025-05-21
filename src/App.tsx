@@ -171,33 +171,33 @@ function App() {
 
   return (
     <div className="App">
-      <div className="streaming-console">
-        <SidePanel />
-        <main>
-          <div className="main-app-area">
-            {/* APP goes here */}
-            <Altair />
-            <GenList />
-            <video
-              className={cn("stream", {
-                hidden: !videoRef.current || !videoStream,
-              })}
-              ref={videoRef}
-              autoPlay
-              playsInline
-            />
-          </div>
+        <div className="streaming-console">
+          <SidePanel />
+          <main>
+            <div className="main-app-area">
+              {/* APP goes here */}
+              <Altair />
+              <GenList />
+              <video
+                className={cn("stream", {
+                  hidden: !videoRef.current || !videoStream,
+                })}
+                ref={videoRef}
+                autoPlay
+                playsInline
+              />
+            </div>
 
-          <ControlTray
-            videoRef={videoRef}
-            supportsVideo={true}
-            onVideoStreamChange={setVideoStream}
-            enableEditingSettings={true}
-          >
-            {/* put your own buttons here */}
-          </ControlTray>
-        </main>
-      </div>
+            <ControlTray
+              videoRef={videoRef}
+              supportsVideo={true}
+              onVideoStreamChange={setVideoStream}
+              enableEditingSettings={true}
+            >
+              {/* put your own buttons here */}
+            </ControlTray>
+          </main>
+        </div>
     </div>
   );
 }

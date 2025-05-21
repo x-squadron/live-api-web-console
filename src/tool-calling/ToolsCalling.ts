@@ -1,8 +1,4 @@
-import {
-  FunctionDeclarationSchema,
-  SchemaType,
-  Tool,
-} from "@google/generative-ai";
+import { Type, Tool, Schema } from "@google/genai";
 import { OpenAIToolSet } from "composio-core";
 import { isArray } from "lodash";
 import { ChatCompletionTool } from "openai/resources/chat";
@@ -28,7 +24,7 @@ export async function getDefaultTools(
             description: tool.function.description,
             parameters: Object.entries(
               tool.function.parameters ?? {}
-            ).reduce<FunctionDeclarationSchema>(
+            ).reduce<Schema>(
               (accumulator, item) => {
                 // console.log("item:", item);
                 const [key, value] = item;
@@ -41,18 +37,18 @@ export async function getDefaultTools(
                     value
                   )) {
                     delete definition.examples;
-                    accumulator.properties[propertyName] = definition;
+                    accumulator.properties![propertyName] = definition;
                   }
                 }
                 if (key === "required" && isArray(value)) {
                   accumulator.required?.concat(value);
                 }
                 if (key === "type") {
-                  accumulator.type = value as SchemaType;
+                  accumulator.type = value as Type;
                 }
                 return accumulator;
               },
-              { type: SchemaType.OBJECT, properties: {}, required: [] }
+              { type: Type.OBJECT, properties: {}, required: [] }
             ),
           };
         }),

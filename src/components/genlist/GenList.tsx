@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 import "./GenList.scss";
-import { type Tool, Part, SchemaType } from "@google/generative-ai";
+import {
+  type Tool,
+  FunctionResponse,
+  LiveConnectConfig,
+  LiveServerToolCall,
+  Part,
+  Type,
+} from "@google/genai";
 import { useEffect, useState, useCallback, memo } from "react";
 import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
-import {
-  ToolCall,
-  ToolResponse,
-  LiveFunctionResponse,
-  LiveConfig,
-} from "../../multimodal-live-types";
 import { List, ListProps } from "./List";
 import { Chips } from "./Chips";
 import { isFunctionDeclarationsTool } from "../../utils/isFunctionDeclarationsTool";
@@ -36,10 +37,30 @@ interface EditListArgs extends CreateListArgs {}
 interface RemoveListArgs {
   id: string;
 }
-interface ResponseObject extends LiveFunctionResponse {
-  name: string;
+interface ResponseObject extends FunctionResponse {
+  name?: string;
   response: { result: object };
 }
+
+/**
+ * DEPRECTATED Types to be removed 👇
+ */
+export type ToolResponseMessage = {
+  toolResponse: {
+    functionResponses: LiveFunctionResponse[];
+  };
+};
+
+export type ToolResponse = ToolResponseMessage["toolResponse"];
+
+export type LiveFunctionResponse = {
+  response: object;
+  id?: string;
+};
+
+/**
+ * DEPRECTATED Types to be removed 👆
+ */
 
 // Tools
 const toolObject: Tool[] = [
@@ -55,18 +76,18 @@ const toolObject: Tool[] = [
         description:
           "Edits list with specified id. Requires `id`, `heading`, and `list_array`. You must provide the complete new list array. May be called multiple times, once for each list requiring edit.",
         parameters: {
-          type: SchemaType.OBJECT,
+          type: Type.OBJECT,
           properties: {
             id: {
-              type: SchemaType.STRING,
+              type: Type.STRING,
             },
             heading: {
-              type: SchemaType.STRING,
+              type: Type.STRING,
             },
             list_array: {
-              type: SchemaType.ARRAY,
+              type: Type.ARRAY,
               items: {
-                type: SchemaType.STRING,
+                type: Type.STRING,
               },
             },
           },
@@ -78,10 +99,10 @@ const toolObject: Tool[] = [
         description:
           "Removes the list with specified id. Requires `id`. May be called multiple times, once for each list you want to remove.",
         parameters: {
-          type: SchemaType.OBJECT,
+          type: Type.OBJECT,
           properties: {
             id: {
-              type: SchemaType.STRING,
+              type: Type.STRING,
             },
           },
           required: ["id"],
@@ -92,18 +113,18 @@ const toolObject: Tool[] = [
         description:
           "Creates new list. Requires `id`, `heading`, and `list_array`. May be called multiple times, once for each list you want to create.",
         parameters: {
-          type: SchemaType.OBJECT,
+          type: Type.OBJECT,
           properties: {
             id: {
-              type: SchemaType.STRING,
+              type: Type.STRING,
             },
             heading: {
-              type: SchemaType.STRING,
+              type: Type.STRING,
             },
             list_array: {
-              type: SchemaType.ARRAY,
+              type: Type.ARRAY,
               items: {
-                type: SchemaType.STRING,
+                type: Type.STRING,
               },
             },
           },
@@ -173,7 +194,7 @@ function GenListComponent() {
   const { client, setConfig, connect, connected } = useLiveAPIContext();
 
   useEffect(() => {
-    setConfig((config: LiveConfig) => {
+    setConfig((config: LiveConnectConfig) => {
       const tools = [...(config.tools ?? [])]
         .filter(isFunctionDeclarationsTool)
         .filter(Boolean)
@@ -199,6 +220,7 @@ function GenListComponent() {
       // console.log("unique tools", uniqueTools);
       console.log(`[GenListComponent] init`, config.systemInstruction);
 
+      // @ts-ignore
       const configuredInstructions = config.systemInstruction?.parts ?? [];
       const componentInstructions: Part[] = systemInstructionObject.parts;
 
@@ -272,13 +294,13 @@ function GenListComponent() {
   }, []);
 
   useEffect(() => {
-    const onToolCall = (toolCall: ToolCall) => {
+    const onToolCall = (toolCall: LiveServerToolCall) => {
       const fCalls = toolCall.functionCalls;
       const functionResponses: ResponseObject[] = [];
 
-      if (fCalls.length > 0) {
+      if (fCalls && fCalls.length > 0) {
         fCalls.forEach((fCall) => {
-          let functionResponse = {
+          let functionResponse: FunctionResponse = {
             id: fCall.id,
             name: fCall.name,
             response: {
@@ -292,19 +314,19 @@ function GenListComponent() {
               break;
             }
             case "edit_list": {
-              const args = fCall.args as EditListArgs;
+              const args = fCall.args as unknown as EditListArgs;
               updateList(args.id, args.list_array);
               break;
             }
             case "remove_list": {
-              const args = fCall.args as RemoveListArgs;
+              const args = fCall.args as unknown as RemoveListArgs;
               setListsState((prevLists) =>
                 prevLists.filter((list) => list.id !== args.id)
               );
               break;
             }
             case "create_list": {
-              const args = fCall.args as EditListArgs;
+              const args = fCall.args as unknown as EditListArgs;
               const newList: ListProps = {
                 id: args.id,
                 heading: args.heading,
@@ -325,7 +347,11 @@ function GenListComponent() {
           }
           if (handled && functionResponse) {
             console.log(`[GenListComponent] got toolcall`, toolCall);
-            functionResponses.push(functionResponse);
+            functionResponses.push({
+              id: functionResponse.id,
+              name: functionResponse.name,
+              response: { result: { ...functionResponse.response } },
+            });
           }
         });
 
@@ -368,6 +394,8 @@ function GenListComponent() {
         ),
       };
       console.log(`[GenListComponent] send tool response`, updatedToolResponse);
+
+      // @ts-ignore
       client.sendToolResponse(updatedToolResponse);
       setToolResponse(null);
     }

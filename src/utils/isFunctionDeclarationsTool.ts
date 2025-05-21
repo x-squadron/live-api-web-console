@@ -1,7 +1,5 @@
-import { FunctionDeclarationsTool, Tool } from "@google/generative-ai";
+import { Tool } from "@google/genai";
 
-export function isFunctionDeclarationsTool(
-  tool: Tool | { googleSearch: {} } | { codeExecution: {} }
-): tool is FunctionDeclarationsTool {
-  return (tool as FunctionDeclarationsTool).functionDeclarations !== undefined;
+export function isFunctionDeclarationsTool(tool: Tool): boolean {
+  return tool.functionDeclarations !== undefined;
 }

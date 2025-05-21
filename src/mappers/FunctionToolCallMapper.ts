@@ -1,15 +1,15 @@
+import { FunctionCall } from "@google/genai";
 import OpenAI from "openai";
-import { LiveFunctionCall } from "../multimodal-live-types";
 
 export class FunctionToolCallMapper {
   static fromLiveFunctionCall(
-    toolCall: LiveFunctionCall
+    toolCall: FunctionCall
   ): OpenAI.ChatCompletionMessageToolCall {
     return {
-      id: toolCall.id,
+      id: toolCall.id ?? "XXX",
       type: "function",
       function: {
-        name: toolCall.name,
+        name: toolCall.name ?? "UnnamedFunction",
         arguments: JSON.stringify(toolCall.args),
       },
     };

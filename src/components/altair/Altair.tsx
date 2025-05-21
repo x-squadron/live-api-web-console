@@ -18,8 +18,9 @@ import vegaEmbed from "vega-embed";
 import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
 import {
   FunctionDeclaration,
+  LiveConnectConfig,
   LiveServerToolCall,
-  Modality,
+  Part,
   Type,
 } from "@google/genai";
 import { isFunctionDeclarationsTool } from "../../utils/isFunctionDeclarationsTool";
@@ -60,6 +61,7 @@ function AltairComponent() {
       ];
       // console.log("unique tools", uniqueTools);
 
+      // @ts-ignore
       const configuredInstructions = config.systemInstruction?.parts ?? [];
       const componentInstructions: Part[] = [
         {
@@ -117,9 +119,9 @@ function AltairComponent() {
                 id: fc.id,
                 name: fc.name,
               })),
-            }),
-          200
-        );
+            });
+          }, 200);
+        }
       }
     };
     client.on("toolcall", onToolCall);

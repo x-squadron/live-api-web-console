@@ -22,17 +22,18 @@ import { Altair } from "./components/altair/Altair";
 import ControlTray from "./components/control-tray/ControlTray";
 import cn from "classnames";
 import { GenList } from "./components/genlist/GenList";
-import {
-  LiveConfig,
-  LiveFunctionResponse,
-  ToolCall,
-  ToolResponse,
-} from "./multimodal-live-types";
 import { isFunctionDeclarationsTool } from "./utils/isFunctionDeclarationsTool";
 import { OpenAIToolSet } from "composio-core";
 import { FunctionToolCallMapper } from "./mappers/FunctionToolCallMapper";
 import { getDefaultTools } from "./tool-calling/ToolsCalling";
 import { MCP_ACTIONS } from "./tool-calling/mcp-actions";
+import {
+  FunctionResponse,
+  LiveClientToolResponse,
+  LiveConnectConfig,
+  LiveServerToolCall,
+  Modality,
+} from "@google/genai";
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture
@@ -41,7 +42,7 @@ function App() {
   // either the screen capture, the video or null, if null we hide it
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
 
-  const { client, setConfig } = useLiveAPIContext();
+  const { client, setConfig, setModel } = useLiveAPIContext();
 
   useEffect(() => {
     console.log("[App] init");
@@ -51,6 +52,10 @@ function App() {
       apiKey: composioApiKey,
     });
 
+    // setModel("models/gemini-2.0-flash-exp");
+    // model: "models/gemini-2.5-flash-exp",
+    setModel("models/gemini-2.5-flash-preview-native-audio-dialog");
+
     (async () => {
       console.log("[App] fetching composio tools");
       const defaultTools = await getDefaultTools(composioToolset, [
@@ -59,7 +64,7 @@ function App() {
         "GOOGLECALENDAR_FIND_EVENT",
         "GOOGLECALENDAR_FIND_FREE_SLOTS",
       ]);
-      setConfig((config: LiveConfig) => {
+      setConfig((config: LiveConnectConfig) => {
         const tools = [...(config.tools ?? [])]
           .filter(isFunctionDeclarationsTool)
           .filter(Boolean)
@@ -88,16 +93,13 @@ function App() {
 
         return {
           ...config,
-          // model: "models/gemini-2.5-flash-exp",
-          model: "models/gemini-2.5-flash-preview-native-audio-dialog",
-          generationConfig: {
-            responseModalities: "audio", // switch to "audio" for audio out
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } },
-            },
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } },
           },
           systemInstruction: {
             parts: [
+              // @ts-ignore
               ...(config.systemInstruction?.parts ?? []),
               {
                 text: `You are a helpfull assistant that can access and manage my calendar, please use the tool whenever needed
@@ -114,13 +116,13 @@ function App() {
       });
     })();
 
-    const onToolCall = async (toolCall: ToolCall) => {
+    const onToolCall = async (toolCall: LiveServerToolCall) => {
       const fCalls = toolCall.functionCalls;
-      const functionResponses: LiveFunctionResponse[] = [];
+      const functionResponses: FunctionResponse[] = [];
 
-      if (fCalls.length > 0) {
+      if (fCalls && fCalls.length > 0) {
         for (const fCall of fCalls) {
-          let functionResponse = {
+          let functionResponse: FunctionResponse = {
             id: fCall.id,
             name: fCall.name,
             response: {
@@ -138,7 +140,7 @@ function App() {
               const response = await composioToolset.executeToolCall(
                 FunctionToolCallMapper.fromLiveFunctionCall(fCall)
               );
-              functionResponse.response.data = response;
+              functionResponse.response!.data = JSON.parse(response);
               break;
             }
             default:
@@ -154,7 +156,7 @@ function App() {
         console.log(`[App] functionResponses:`, functionResponses);
         if (functionResponses.length) {
           // Send tool responses back to the model
-          const toolResponse: ToolResponse = {
+          const toolResponse: LiveClientToolResponse = {
             functionResponses: functionResponses,
           };
           console.log(`[App] send tool response`, toolResponse);
@@ -167,37 +169,37 @@ function App() {
     return () => {
       client.off("toolcall", onToolCall);
     };
-  }, [setConfig]);
+  }, [setConfig, setModel, client]);
 
   return (
     <div className="App">
-        <div className="streaming-console">
-          <SidePanel />
-          <main>
-            <div className="main-app-area">
-              {/* APP goes here */}
-              <Altair />
-              <GenList />
-              <video
-                className={cn("stream", {
-                  hidden: !videoRef.current || !videoStream,
-                })}
-                ref={videoRef}
-                autoPlay
-                playsInline
-              />
-            </div>
+      <div className="streaming-console">
+        <SidePanel />
+        <main>
+          <div className="main-app-area">
+            {/* APP goes here */}
+            <Altair />
+            <GenList />
+            <video
+              className={cn("stream", {
+                hidden: !videoRef.current || !videoStream,
+              })}
+              ref={videoRef}
+              autoPlay
+              playsInline
+            />
+          </div>
 
-            <ControlTray
-              videoRef={videoRef}
-              supportsVideo={true}
-              onVideoStreamChange={setVideoStream}
-              enableEditingSettings={true}
-            >
-              {/* put your own buttons here */}
-            </ControlTray>
-          </main>
-        </div>
+          <ControlTray
+            videoRef={videoRef}
+            supportsVideo={true}
+            onVideoStreamChange={setVideoStream}
+            enableEditingSettings={true}
+          >
+            {/* put your own buttons here */}
+          </ControlTray>
+        </main>
+      </div>
     </div>
   );
 }

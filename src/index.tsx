@@ -30,12 +30,12 @@ if (typeof API_KEY !== "string") {
   throw new Error("set REACT_APP_GEMINI_API_KEY in .env");
 }
 
-const host = "generativelanguage.googleapis.com";
-const uri = `wss://${host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`;
+// const host = "generativelanguage.googleapis.com";
+// const uri = `wss://${host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`;
 
 root.render(
   <React.StrictMode>
-    <LiveAPIProvider url={uri} apiKey={API_KEY}>
+    <LiveAPIProvider options={{ apiKey: API_KEY }}>
       <App />
     </LiveAPIProvider>
   </React.StrictMode>

@@ -4,7 +4,7 @@ import {
   Tool,
 } from "@google/generative-ai";
 import { OpenAIToolSet } from "composio-core";
-import { ChatCompletion, ChatCompletionTool } from "openai/resources/chat";
+import { ChatCompletionTool } from "openai/resources/chat";
 
 export async function getDefaultTools(): Promise<Tool[]> {
   const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY;
@@ -23,32 +23,37 @@ export async function getDefaultTools(): Promise<Tool[]> {
 
   return [
     {
-      functionDeclarations: composioTools.map((tool: ChatCompletionTool) => {
-        console.log("tools: ", tool.function.parameters);
-        return {
-          name: tool.function.name,
-          description: tool.function.description,
-          parameters: Object.entries(
-            tool.function.parameters ?? {}
-          ).reduce<FunctionDeclarationSchema>(
-            (accumulator, [key, value]) => {
-              if (typeof value === "string") {
-                accumulator.properties[key] = {
-                  type: SchemaType.STRING,
-                  description: value,
-                };
-              } else if (typeof value === "boolean") {
-                accumulator.properties[key] = {
-                  type: SchemaType.BOOLEAN,
-                  //   description: value,
-                };
-              }
-              return accumulator;
-            },
-            { type: SchemaType.OBJECT, properties: {} }
-          ),
-        };
-      }),
+      functionDeclarations: composioTools
+        // .slice(0, 1)
+        .map((tool: ChatCompletionTool) => {
+          // console.log("[getDefaultTools] composio tool: ", tool);
+          return {
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: Object.entries(
+              tool.function.parameters ?? {}
+            ).reduce<FunctionDeclarationSchema>(
+              (accumulator, item) => {
+                // console.log("item:", item);
+                // const [key, value] = item;
+                // if (typeof value === "string") {
+                //   accumulator.properties[key] = {
+                //     type: SchemaType.STRING,
+                //     // description: value,
+                //   };
+                // } else if (typeof value === "boolean") {
+                //   accumulator.properties[key] = {
+                //     type: SchemaType.BOOLEAN,
+                //     //   description: value,
+                //   };
+                // }
+                // accumulator.required?.push(key);
+                return accumulator;
+              },
+              { type: SchemaType.OBJECT, properties: {}, required: [] }
+            ),
+          };
+        }),
     },
   ];
 }

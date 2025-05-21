@@ -33,7 +33,7 @@ export default function SettingsDialog() {
   }, [config]);
 
   const systemInstruction = useMemo(() => {
-    const s = config.systemInstruction?.parts.find((p) => p.text)?.text || "";
+    const s = config.systemInstruction?.parts.map((p) => p.text).join();
 
     return s;
   }, [config]);

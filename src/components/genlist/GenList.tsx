@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 import "./GenList.scss";
-import { type Tool, SchemaType } from "@google/generative-ai";
+import { type Tool, Part, SchemaType } from "@google/generative-ai";
 import { useEffect, useState, useCallback, memo } from "react";
 import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
 import {
   ToolCall,
   ToolResponse,
   LiveFunctionResponse,
+  LiveConfig,
 } from "../../multimodal-live-types";
 import { List, ListProps } from "./List";
 import { Chips } from "./Chips";
+import { isFunctionDeclarationsTool } from "../../utils/isFunctionDeclarationsTool";
 // Types
 interface CreateListArgs {
   id: string;
@@ -171,16 +173,51 @@ function GenListComponent() {
   const { client, setConfig, connect, connected } = useLiveAPIContext();
 
   useEffect(() => {
-    setConfig({
-      model: "models/gemini-2.0-flash-exp",
-      generationConfig: {
-        responseModalities: "audio", // switch to "audio" for audio out
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } },
+    setConfig((config: LiveConfig) => {
+      const tools = [...(config.tools ?? [])]
+        .filter(isFunctionDeclarationsTool)
+        .filter(Boolean)
+        .map((tool) => tool.functionDeclarations ?? [])
+        .flat();
+      // console.log("[App] configured tool names: ", tools);
+
+      const componentToolsDeclarations = toolObject
+        .filter(isFunctionDeclarationsTool)
+        .filter(Boolean)
+        .map((tool) => tool.functionDeclarations ?? [])
+        .flat();
+      // console.log("[App] component tool names: ", componentToolsDeclarations);
+
+      const uniqueTools = [
+        ...new Map(
+          [...tools, ...componentToolsDeclarations].map((tool) => [
+            tool.name,
+            tool,
+          ])
+        ).values(),
+      ];
+      // console.log("unique tools", uniqueTools);
+      console.log(`[GenListComponent] init`, config.systemInstruction);
+
+      const configuredInstructions = config.systemInstruction?.parts ?? [];
+      const componentInstructions: Part[] = systemInstructionObject.parts;
+
+      const uniqueSystemInstructions = [
+        ...new Map(
+          [...configuredInstructions, ...componentInstructions].map((tool) => [
+            tool.text,
+            tool,
+          ])
+        ).values(),
+      ];
+
+      return {
+        ...config,
+        systemInstruction: {
+          parts: [...uniqueSystemInstructions],
         },
-      },
-      systemInstruction: systemInstructionObject,
-      tools: toolObject,
+        tools: [{ functionDeclarations: uniqueTools }],
+      };
     });
   }, [setConfig]);
 

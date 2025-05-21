@@ -13,11 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { type FunctionDeclaration, SchemaType } from "@google/generative-ai";
+import {
+  type FunctionDeclaration,
+  Part,
+  SchemaType,
+} from "@google/generative-ai";
 import { useEffect, useRef, useState, memo } from "react";
 import vegaEmbed from "vega-embed";
 import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
-import { ToolCall } from "../../multimodal-live-types";
+import { LiveConfig, ToolCall } from "../../multimodal-live-types";
+import { isFunctionDeclarationsTool } from "../../utils/isFunctionDeclarationsTool";
 
 const declaration: FunctionDeclaration = {
   name: "render_altair",
@@ -40,26 +45,51 @@ function AltairComponent() {
   const { client, setConfig } = useLiveAPIContext();
 
   useEffect(() => {
-    setConfig({
-      model: "models/gemini-2.0-flash-exp",
-      generationConfig: {
-        responseModalities: "audio",
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } },
+    setConfig((config: LiveConfig) => {
+      const tools = [...(config.tools ?? [])]
+        .filter(isFunctionDeclarationsTool)
+        .filter(Boolean)
+        .map((tool) => tool.functionDeclarations ?? [])
+        .flat();
+      // console.log("[App] configured tool names: ", tools);
+
+      const uniqueTools = [
+        ...new Map(
+          [...tools, ...[declaration]].map((tool) => [tool.name, tool])
+        ).values(),
+      ];
+      // console.log("unique tools", uniqueTools);
+
+      const configuredInstructions = config.systemInstruction?.parts ?? [];
+      const componentInstructions: Part[] = [
+        {
+          text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.',
         },
-      },
-      systemInstruction: {
-        parts: [
-          {
-            text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.', //a2a
-          },
-        ],
-      },
-      tools: [
-        // there is a free-tier quota for search
-        { googleSearch: {} },
-        { functionDeclarations: [declaration] },
-      ],
+      ];
+
+      const uniqueSystemInstructions = [
+        ...new Map(
+          [...configuredInstructions, ...componentInstructions].map((tool) => [
+            tool.text,
+            tool,
+          ])
+        ).values(),
+      ];
+
+      console.log(`[AltairComponent] init`, config.systemInstruction);
+
+      return {
+        ...config,
+        systemInstruction: {
+          parts: [...uniqueSystemInstructions],
+        },
+        tools: [{ functionDeclarations: uniqueTools }],
+        // tools: [
+        //   // there is a free-tier quota for search
+        //   { googleSearch: {} },
+        //   { functionDeclarations: [declaration] },
+        // ],
+      };
     });
   }, [setConfig]);
 

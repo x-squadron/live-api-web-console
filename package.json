@@ -68,5 +68,11 @@
   },
   "overrides": {
     "typescript": "^5.6.3"
+  },
+  "browser": {
+    "fs": false,
+    "os": false,
+    "path": false,
+    "child_process": false
   }
 }

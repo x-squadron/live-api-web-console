@@ -26,7 +26,7 @@ import VolMeterWorket from "../lib/worklets/vol-meter";
 
 export type UseLiveAPIResults = {
   client: MultimodalLiveClient;
-  setConfig: (config: LiveConfig) => void;
+  setConfig: React.Dispatch<React.SetStateAction<LiveConfig>>;
   config: LiveConfig;
   connected: boolean;
   connect: () => Promise<void>;
@@ -40,7 +40,7 @@ export function useLiveAPI({
 }: MultimodalLiveAPIClientConnection): UseLiveAPIResults {
   const client = useMemo(
     () => new MultimodalLiveClient({ url, apiKey }),
-    [url, apiKey],
+    [url, apiKey]
   );
   const audioStreamerRef = useRef<AudioStreamer | null>(null);
 
@@ -48,6 +48,7 @@ export function useLiveAPI({
   const [config, setConfig] = useState<LiveConfig>({
     model: "models/gemini-2.0-flash-exp",
   });
+
   const [volume, setVolume] = useState(0);
 
   // register audio for streaming server -> speakers

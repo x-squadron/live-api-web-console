@@ -24,7 +24,7 @@ import { LiveConnectConfig } from "@google/genai";
 
 export type UseLiveAPIResults = {
   client: GenAILiveClient;
-  setConfig: (config: LiveConnectConfig) => void;
+  setConfig: React.Dispatch<React.SetStateAction<LiveConnectConfig>>;
   config: LiveConnectConfig;
   model: string;
   setModel: (model: string) => void;

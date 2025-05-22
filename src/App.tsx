@@ -34,6 +34,8 @@ import {
   LiveServerToolCall,
   Modality,
 } from "@google/genai";
+import { Alert } from "./components/alerts/Alert";
+import { ToastContainer, toast } from "react-tiny-toast";
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture
@@ -58,11 +60,13 @@ function App() {
 
     (async () => {
       console.log("[App] fetching composio tools");
+
       const defaultTools = await getDefaultTools(composioToolset, [
         "GOOGLECALENDAR_CREATE_EVENT",
         "GOOGLECALENDAR_DELETE_EVENT",
         "GOOGLECALENDAR_FIND_EVENT",
         "GOOGLECALENDAR_FIND_FREE_SLOTS",
+        "CALENDLY_GET_CURRENT_USER",
       ]);
       setConfig((config: LiveConnectConfig) => {
         const tools = [...(config.tools ?? [])]
@@ -102,11 +106,12 @@ function App() {
               // @ts-ignore
               ...(config.systemInstruction?.parts ?? []),
               {
-                text: `You are a helpfull assistant that can access and manage my calendar, please use the tool whenever needed
+                text: `You are a helpfull assistant that can access and manage my calendar, please always use one of these tools when asked about anything related to my events, never invent events.
                        • "GOOGLECALENDAR_CREATE_EVENT"
                        • "GOOGLECALENDAR_DELETE_EVENT"
                        • "GOOGLECALENDAR_FIND_EVENT"
                        • "GOOGLECALENDAR_FIND_FREE_SLOTS"
+                       • "CALENDLY_GET_CURRENT_USER"
                 `,
               },
             ],
@@ -136,20 +141,53 @@ function App() {
             case "GOOGLECALENDAR_FIND_EVENT":
             case "GOOGLECALENDAR_FIND_FREE_SLOTS":
             case "GOOGLECALENDAR_CREATE_EVENT":
-            case "GOOGLECALENDAR_DELETE_EVENT": {
-              const response = await composioToolset.executeToolCall(
-                FunctionToolCallMapper.fromLiveFunctionCall(fCall)
-              );
-              functionResponse.response!.data = JSON.parse(response);
+            case "GOOGLECALENDAR_DELETE_EVENT":
+            case "CALENDLY_GET_CURRENT_USER": {
+              try {
+                const response = await composioToolset.executeToolCall(
+                  FunctionToolCallMapper.fromLiveFunctionCall(fCall)
+                );
+                functionResponse.response!.data = JSON.parse(response);
+              } catch (error) {
+                functionResponse.response!.data = {
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              }
               break;
             }
             default:
               handled = false;
               break;
           }
+
           if (handled && functionResponse) {
             console.log(`[App] got toolcall`, toolCall, functionResponse);
             functionResponses.push(functionResponse);
+
+            // Show alert based on response
+            const resp = functionResponse.response?.data;
+            const isSuccess = !(resp as any)?.error;
+
+            if (isSuccess) {
+              toast.show(
+                <Alert type="success">
+                  {`Tool call '${fCall.name}' was executed successfully ✅`}
+                </Alert>,
+                {
+                  timeout: 3000,
+                }
+              );
+            } else {
+              console.log("❌ [App] tool call failed", resp);
+              toast.show(
+                <Alert type="error">
+                  {`Tool call '${fCall.name}' failed ❌`}
+                </Alert>,
+                {
+                  timeout: 3000,
+                }
+              );
+            }
           }
         }
 
@@ -173,6 +211,7 @@ function App() {
 
   return (
     <div className="App">
+      <ToastContainer />
       <div className="streaming-console">
         <SidePanel />
         <main>

@@ -8,23 +8,25 @@ const voiceOptions = [
   { value: "Kore", label: "Kore" },
   { value: "Fenrir", label: "Fenrir" },
   { value: "Aoede", label: "Aoede" },
+  { value: "en-US-Neural2-A", label: "en-US-Neural2-A" },
+  { value: "en-US-Neural2-B", label: "en-US-Neural2-B" },
+  { value: "en-US-Neural2-C", label: "en-US-Neural2-C" },
+  { value: "en-US-Neural2-D", label: "en-US-Neural2-D" },
+  { value: "en-US-Neural2-E", label: "en-US-Neural2-E" },
+  { value: "en-US-Neural2-F", label: "en-US-Neural2-F" },
 ];
 
 export default function VoiceSelector() {
-  const { config, setConfig } = useLiveAPIContext();
+  const { config, setConfig, connected } = useLiveAPIContext();
+  const [selectedOption, setSelectedOption] = useState(voiceOptions[0]);
 
   useEffect(() => {
     const voiceName =
       config.generationConfig?.speechConfig?.voiceConfig?.prebuiltVoiceConfig
-        ?.voiceName || "Atari02";
-    const voiceOption = { value: voiceName, label: voiceName };
-    setSelectedOption(voiceOption);
+        ?.voiceName || "Puck";
+    const found = voiceOptions.find((v) => v.value === voiceName);
+    setSelectedOption(found || voiceOptions[0]);
   }, [config]);
-
-  const [selectedOption, setSelectedOption] = useState<{
-    value: string;
-    label: string;
-  } | null>(voiceOptions[5]);
 
   const updateConfig = useCallback(
     (voiceName: string) => {
@@ -33,9 +35,12 @@ export default function VoiceSelector() {
         generationConfig: {
           ...config.generationConfig,
           speechConfig: {
+            ...config.generationConfig?.speechConfig,
             voiceConfig: {
+              ...config.generationConfig?.speechConfig?.voiceConfig,
               prebuiltVoiceConfig: {
-                voiceName: voiceName,
+                ...config.generationConfig?.speechConfig?.voiceConfig?.prebuiltVoiceConfig,
+                voiceName,
               },
             },
           },
@@ -73,8 +78,9 @@ export default function VoiceSelector() {
         value={selectedOption}
         defaultValue={selectedOption}
         options={voiceOptions}
+        isDisabled={connected}
         onChange={(e) => {
-          setSelectedOption(e);
+          setSelectedOption(e!);
           if (e) {
             updateConfig(e.value);
           }

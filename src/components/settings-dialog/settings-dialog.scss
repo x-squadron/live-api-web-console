@@ -173,3 +173,137 @@
     }
   }
 }
+
+.settings-section {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+
+  h3 {
+    margin: 0 0 1rem;
+    font-size: 1.1rem;
+    color: #333;
+  }
+}
+
+.select-wrapper {
+  position: relative;
+  margin-bottom: 0.5rem;
+
+  .settings-select {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+    font-size: 0.9rem;
+
+    &:disabled {
+      background: #f0f0f0;
+      cursor: not-allowed;
+    }
+  }
+
+  .loading-spinner {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+}
+
+.server-description {
+  font-size: 0.9rem;
+  color: #666;
+  margin-top: 0.5rem;
+}
+
+.tools-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+
+  .tool-item {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+
+    h4 {
+      margin: 0 0 0.5rem;
+      color: #2c3e50;
+    }
+
+    .tool-description {
+      color: #666;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    .tool-parameters {
+      h5 {
+        margin: 0 0 0.5rem;
+        color: #34495e;
+      }
+
+      ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+
+        li {
+          margin-bottom: 0.5rem;
+          padding: 0.5rem;
+          background: #f8f9fa;
+          border-radius: 3px;
+
+          strong {
+            color: #2c3e50;
+          }
+
+          .parameter-type {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.25rem;
+          }
+
+          .parameter-description {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.25rem;
+          }
+        }
+      }
+    }
+  }
+}
+
+.error-message {
+  color: #e74c3c;
+  padding: 0.5rem;
+  background: #fde8e8;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.loading-message,
+.no-tools-message {
+  color: #666;
+  text-align: center;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+@keyframes spin {
+  0% { transform: translateY(-50%) rotate(0deg); }
+  100% { transform: translateY(-50%) rotate(360deg); }
+}

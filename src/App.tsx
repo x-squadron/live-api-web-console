@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+// App.tsx
 import { useEffect, useRef, useState } from "react";
 import "./App.scss";
 import { useLiveAPIContext } from "./contexts/LiveAPIContext";
@@ -23,7 +24,7 @@ import ControlTray from "./components/control-tray/ControlTray";
 import cn from "classnames";
 import { GenList } from "./components/genlist/GenList";
 import { isFunctionDeclarationsTool } from "./utils/isFunctionDeclarationsTool";
-import { OpenAIToolSet } from "composio-core";
+import { OpenAIToolSet, Composio } from "composio-core";
 import { FunctionToolCallMapper } from "./mappers/FunctionToolCallMapper";
 import { getDefaultTools } from "./tool-calling/ToolsCalling";
 import { MCP_ACTIONS } from "./tool-calling/mcp-actions";
@@ -53,13 +54,17 @@ function App() {
     const composioToolset = new OpenAIToolSet({
       apiKey: composioApiKey,
     });
-
+    const composio = new Composio({
+      apiKey: composioApiKey,
+    });
     // setModel("models/gemini-2.0-flash-exp");
     // model: "models/gemini-2.5-flash-exp",
     setModel("models/gemini-2.5-flash-preview-native-audio-dialog");
 
     (async () => {
       console.log("[App] fetching composio tools");
+      const apps = await composio.apps.list();
+      console.log("[Composio] fetching composio available apps:", apps);
 
       const defaultTools = await getDefaultTools(composioToolset, [
         "GOOGLECALENDAR_CREATE_EVENT",
@@ -106,12 +111,24 @@ function App() {
               // @ts-ignore
               ...(config.systemInstruction?.parts ?? []),
               {
-                text: `You are a helpfull assistant that can access and manage my calendar, please always use one of these tools when asked about anything related to my events, never invent events.
+                text: `EN: You are a helpfull assistant that can access and manage my calendar, please always use one of these tools when asked about anything related to my events, never invent events.
                        • "GOOGLECALENDAR_CREATE_EVENT"
                        • "GOOGLECALENDAR_DELETE_EVENT"
                        • "GOOGLECALENDAR_FIND_EVENT"
                        • "GOOGLECALENDAR_FIND_FREE_SLOTS"
                        • "CALENDLY_GET_CURRENT_USER"
+                       FR: Tu es un assistant utile qui peut accéder à mon calendrier et le gérer. Utilise toujours l'un des outils suivants lorsqu'on te pose une question liée à mes événements, et ne crée jamais d'événements inventés.
+                        • "GOOGLECALENDAR_CREATE_EVENT"
+                        • "GOOGLECALENDAR_DELETE_EVENT"
+                        • "GOOGLECALENDAR_FIND_EVENT"
+                        • "GOOGLECALENDAR_FIND_FREE_SLOTS"
+                        • "CALENDLY_GET_CURRENT_USER"
+                      AR: أنت مساعد ذكي يمكنه الوصول إلى تقويمي وإدارته. يُرجى استخدام أحد هذه الأدوات دائمًا عند سؤالك عن أي شيء متعلق بأحداثي، ولا تخترع أحداثًا من نفسك.
+                    • "GOOGLECALENDAR_CREATE_EVENT"
+                    • "GOOGLECALENDAR_DELETE_EVENT"
+                    • "GOOGLECALENDAR_FIND_EVENT"
+                    • "GOOGLECALENDAR_FIND_FREE_SLOTS"
+                    • "CALENDLY_GET_CURRENT_USER"
                 `,
               },
             ],

@@ -15,7 +15,7 @@ export async function connectToApp(
     try {
       const connection = await entity.getConnection({ app: appName });
       if (connection?.status === "ACTIVE") {
-        toast.show(`✅ Already connected to ${appName}`, { timeout: 3000 });
+        toast.show(`✅ Already connected to ${appName}.`, { timeout: 3000 });
         return;
       }
     } catch {}

@@ -20,7 +20,7 @@
     padding: 0;
     margin: 0;
     position: fixed;
-    top: -400px; // You can adjust this
+    top: -400px;
     right: 0;
     width: 800px;
     height: auto;
@@ -31,7 +31,7 @@
   .dialog-container {
     box-sizing: border-box;
     padding: 16px;
-    max-height: 300px;
+    max-height: 700px;
     overflow-y: auto;
     overflow-x: hidden;
   }
@@ -39,6 +39,12 @@
     padding: 6px 0;
     font-size: 13px;
     color: var(--Neutral-80);
+    cursor: pointer;
+    transition: background 0.2s ease;
+
+    &:hover {
+      background: var(--Neutral-10);
+    }
 
     .app-entry {
       display: flex;

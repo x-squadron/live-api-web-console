@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.scss";
 import { useLiveAPIContext } from "./contexts/LiveAPIContext";
+import { useSelectedToolsContext } from "./contexts/SelectedToolsContext";
 import SidePanel from "./components/side-panel/SidePanel";
 import { Altair } from "./components/altair/Altair";
 import ControlTray from "./components/control-tray/ControlTray";
@@ -27,13 +28,13 @@ import { isFunctionDeclarationsTool } from "./utils/isFunctionDeclarationsTool";
 import { OpenAIToolSet, Composio } from "composio-core";
 import { FunctionToolCallMapper } from "./mappers/FunctionToolCallMapper";
 import { getDefaultTools } from "./tool-calling/ToolsCalling";
-import { MCP_ACTIONS } from "./tool-calling/mcp-actions";
 import {
   FunctionResponse,
   LiveClientToolResponse,
   LiveConnectConfig,
   LiveServerToolCall,
   Modality,
+  Tool,
 } from "@google/genai";
 import { Alert } from "./components/alerts/Alert";
 import { ToastContainer, toast } from "react-tiny-toast";
@@ -46,11 +47,18 @@ function App() {
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
 
   const { client, setConfig, setModel } = useLiveAPIContext();
+  const { getAllSelectedToolNames } = useSelectedToolsContext();
 
   useEffect(() => {
     console.log("[App] init");
 
-    const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY;
+    const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY!;
+
+    if (!composioApiKey) {
+      console.error("REACT_APP_COMPOSIO_API_KEY is not set");
+      return;
+    }
+
     const composioToolset = new OpenAIToolSet({
       apiKey: composioApiKey,
     });
@@ -66,13 +74,18 @@ function App() {
       const apps = await composio.apps.list();
       console.log("[Composio] fetching composio available apps:", apps);
 
-      const defaultTools = await getDefaultTools(composioToolset, [
-        "GOOGLECALENDAR_CREATE_EVENT",
-        "GOOGLECALENDAR_DELETE_EVENT",
-        "GOOGLECALENDAR_FIND_EVENT",
-        "GOOGLECALENDAR_FIND_FREE_SLOTS",
-        "CALENDLY_GET_CURRENT_USER",
-      ]);
+      // Get selected tools from context instead of hardcoded list
+      const selectedToolNames = getAllSelectedToolNames();
+      console.log("[App] Selected tools from context:", selectedToolNames);
+
+      // Only load tools that are actually selected from the UI
+      const toolsToLoad = selectedToolNames;
+
+      let defaultTools: Tool[] = [];
+      if (toolsToLoad.length > 0) {
+        defaultTools = await getDefaultTools(composioToolset, toolsToLoad);
+      }
+
       setConfig((config: LiveConnectConfig) => {
         const tools = [...(config.tools ?? [])]
           .filter(isFunctionDeclarationsTool)
@@ -98,7 +111,26 @@ function App() {
             ])
           ).values(),
         ];
-        // console.log("unique tools", uniqueTools);
+
+        // Create dynamic system instruction based on selected tools
+        const toolsList =
+          toolsToLoad.length > 0
+            ? toolsToLoad
+                .map((tool) => `• "${tool}"`)
+                .join("\n                       ")
+            : "";
+
+        const systemInstructionText =
+          // toolsToLoad.length > 0 ?
+          `EN: You are a helpful assistant that can access and manage various tools and services. Please always use one of these available tools when asked about anything related to their functionality, never invent data.
+                       ${toolsList}
+                       FR: Tu es un assistant utile qui peut accéder à divers outils et services. Utilise toujours l'un des outils disponibles suivants lorsqu'on te pose une question liée à leur fonctionnalité, et ne crée jamais de données inventées.
+                       ${toolsList}
+                       AR: أنت مساعد ذكي يمكنه الوصول إلى أدوات وخدمات مختلفة. يُرجى استخدام أحد هذه الأدوات المتاحة دائمًا عند سؤالك عن أي شيء متعلق بوظائفها، ولا تخترع بيانات من نفسك.
+                       ${toolsList}`;
+        // : `EN: You are a helpful assistant. Currently no external tools are selected, so please provide general assistance based on your knowledge.
+        //            FR: Tu es un assistant utile. Actuellement, aucun outil externe n'est sélectionné, alors fournis une assistance générale basée sur tes connaissances.
+        //            AR: أنت مساعد ذكي. حاليًا لم يتم تحديد أي أدوات خارجية، لذا يُرجى تقديم المساعدة العامة بناءً على معرفتك.`;
 
         return {
           ...config,
@@ -111,25 +143,7 @@ function App() {
               // @ts-ignore
               ...(config.systemInstruction?.parts ?? []),
               {
-                text: `EN: You are a helpfull assistant that can access and manage my calendar, please always use one of these tools when asked about anything related to my events, never invent events.
-                       • "GOOGLECALENDAR_CREATE_EVENT"
-                       • "GOOGLECALENDAR_DELETE_EVENT"
-                       • "GOOGLECALENDAR_FIND_EVENT"
-                       • "GOOGLECALENDAR_FIND_FREE_SLOTS"
-                       • "CALENDLY_GET_CURRENT_USER"
-                       FR: Tu es un assistant utile qui peut accéder à mon calendrier et le gérer. Utilise toujours l'un des outils suivants lorsqu'on te pose une question liée à mes événements, et ne crée jamais d'événements inventés.
-                        • "GOOGLECALENDAR_CREATE_EVENT"
-                        • "GOOGLECALENDAR_DELETE_EVENT"
-                        • "GOOGLECALENDAR_FIND_EVENT"
-                        • "GOOGLECALENDAR_FIND_FREE_SLOTS"
-                        • "CALENDLY_GET_CURRENT_USER"
-                      AR: أنت مساعد ذكي يمكنه الوصول إلى تقويمي وإدارته. يُرجى استخدام أحد هذه الأدوات دائمًا عند سؤالك عن أي شيء متعلق بأحداثي، ولا تخترع أحداثًا من نفسك.
-                    • "GOOGLECALENDAR_CREATE_EVENT"
-                    • "GOOGLECALENDAR_DELETE_EVENT"
-                    • "GOOGLECALENDAR_FIND_EVENT"
-                    • "GOOGLECALENDAR_FIND_FREE_SLOTS"
-                    • "CALENDLY_GET_CURRENT_USER"
-                `,
+                text: systemInstructionText,
               },
             ],
           },
@@ -154,27 +168,28 @@ function App() {
           };
           let handled = true;
 
-          switch (fCall.name as MCP_ACTIONS) {
-            case "GOOGLECALENDAR_FIND_EVENT":
-            case "GOOGLECALENDAR_FIND_FREE_SLOTS":
-            case "GOOGLECALENDAR_CREATE_EVENT":
-            case "GOOGLECALENDAR_DELETE_EVENT":
-            case "CALENDLY_GET_CURRENT_USER": {
-              try {
-                const response = await composioToolset.executeToolCall(
-                  FunctionToolCallMapper.fromLiveFunctionCall(fCall)
-                );
-                functionResponse.response!.data = JSON.parse(response);
-              } catch (error) {
-                functionResponse.response!.data = {
-                  error: error instanceof Error ? error.message : String(error),
-                };
-              }
-              break;
+          // Get currently selected tools
+          const selectedToolNames = getAllSelectedToolNames();
+
+          // Check if this tool is in our selected tools
+          const isSelectedTool =
+            fCall.name && selectedToolNames.includes(fCall.name);
+
+          if (isSelectedTool) {
+            try {
+              const response = await composioToolset.executeToolCall(
+                FunctionToolCallMapper.fromLiveFunctionCall(fCall)
+              );
+              functionResponse.response!.data = JSON.parse(response);
+            } catch (error) {
+              functionResponse.response!.data = {
+                error: error instanceof Error ? error.message : String(error),
+              };
             }
-            default:
-              handled = false;
-              break;
+          } else {
+            // Tool not selected
+            handled = false;
+            console.log(`[App] Tool '${fCall.name}' not in selected tools`);
           }
 
           if (handled && functionResponse) {
@@ -224,7 +239,7 @@ function App() {
     return () => {
       client.off("toolcall", onToolCall);
     };
-  }, [setConfig, setModel, client]);
+  }, [setConfig, setModel, client, getAllSelectedToolNames]);
 
   return (
     <div className="App">

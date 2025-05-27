@@ -4,6 +4,28 @@ import { isArray } from "lodash";
 import { ChatCompletionTool } from "openai/resources/chat";
 import { MCP_ACTIONS } from "./mcp-actions";
 
+// Recursively remove 'examples' fields from any object
+function removeExamples(obj: any): any {
+  if (obj === null || typeof obj !== "object") {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(removeExamples);
+  }
+
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === "examples") {
+      // Skip the examples field entirely
+      continue;
+    }
+    cleaned[key] = removeExamples(value);
+  }
+
+  return cleaned;
+}
+
 export async function getDefaultTools(
   toolset: OpenAIToolSet,
   actions: MCP_ACTIONS[]
@@ -19,14 +41,17 @@ export async function getDefaultTools(
         // .slice(1, 2)
         .map((tool: ChatCompletionTool) => {
           // console.log("[getDefaultTools] composio tool: ", tool);
+
+          // Clean the entire tool function parameters to remove all examples
+          const cleanedParameters = removeExamples(
+            tool.function.parameters ?? {}
+          );
+
           return {
             name: tool.function.name,
             description: tool.function.description,
-            parameters: Object.entries(
-              tool.function.parameters ?? {}
-            ).reduce<Schema>(
+            parameters: Object.entries(cleanedParameters).reduce<Schema>(
               (accumulator, item) => {
-                // console.log("item:", item);
                 const [key, value] = item;
                 if (
                   key === "properties" &&
@@ -36,12 +61,14 @@ export async function getDefaultTools(
                   for (let [propertyName, definition] of Object.entries(
                     value
                   )) {
-                    delete definition.examples;
                     accumulator.properties![propertyName] = definition;
                   }
                 }
                 if (key === "required" && isArray(value)) {
-                  accumulator.required?.concat(value);
+                  accumulator.required = [
+                    ...(accumulator.required ?? []),
+                    ...value,
+                  ];
                 }
                 if (key === "type") {
                   accumulator.type = value as Type;

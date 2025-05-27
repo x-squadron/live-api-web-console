@@ -44,8 +44,8 @@ export function ComposioAppList() {
   );
   const [loadingTools, setLoadingTools] = useState<Set<string>>(new Set());
 
-  // Use global context for selected tools
-  const { selectedTools, setSelectedTools } = useSelectedToolsContext();
+  // Use global context for selected tools and activation statuses
+  const { selectedTools, setSelectedTools, activationStatuses, setActivationStatuses } = useSelectedToolsContext();
 
   const toolset = useMemo(
     () =>
@@ -198,6 +198,36 @@ export function ComposioAppList() {
     [setSelectedTools]
   );
 
+  // Toggle app activation (for connected apps)
+  const toggleAppActivation = useCallback(
+    (appName: string) => {
+      setActivationStatuses((prev) => {
+        const newMap = new Map(prev);
+        const currentStatus = newMap.get(appName) !== false; // default is true (activated)
+        const newStatus = !currentStatus;
+        
+        newMap.set(appName, newStatus);
+        
+        console.log(`🔄 ${appName} ${newStatus ? 'activated' : 'deactivated'}`);
+        
+        // If deactivating, only collapse the tools section (preserve selectedTools)
+        if (!newStatus) {
+          // Collapse the app if it was expanded
+          setExpandedApps((prevExpanded) => {
+            const newSet = new Set(prevExpanded);
+            newSet.delete(appName);
+            return newSet;
+          });
+          
+          console.log(`🧹 Collapsed tools section for deactivated app: ${appName} (selections preserved)`);
+        }
+        
+        return newMap;
+      });
+    },
+    [setActivationStatuses, setExpandedApps]
+  );
+
   useEffect(() => {
     const fetchApps = async () => {
       try {
@@ -271,47 +301,94 @@ export function ComposioAppList() {
     setProcessingApps((prev) => new Set(prev.add(appName)));
 
     try {
-      await connectToApp(appName.toLowerCase());
+      // Trigger OAuth connection and wait for popup to close
+      const oauthSuccess = await connectToApp(appName.toLowerCase());
 
-      // Refresh connection status after connection attempt
-      setTimeout(async () => {
-        try {
-          const entity = await toolset.getEntity("default");
-          const connection = await entity.getConnection({
-            app: appName.toLowerCase(),
-          });
-
-          setConnectionStatuses((prev) => {
-            const newMap = new Map(prev);
-            newMap.set(
-              appName,
-              connection?.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"
-            );
-            return newMap;
-          });
-
-          if (connection?.status === "ACTIVE" && connection?.id) {
-            setConnectionIds((prev) => {
-              const newMap = new Map(prev);
-              newMap.set(appName, connection.id);
-              return newMap;
+      if (oauthSuccess) {
+        console.log(`🔄 OAuth popup closed for ${appName}, checking connection status...`);
+        
+        // Check connection status after OAuth popup closes
+        const checkConnectionStatus = async (retryCount = 0) => {
+          try {
+            const entity = await toolset.getEntity("default");
+            const connection = await entity.getConnection({
+              app: appName.toLowerCase(),
             });
+
+            console.log(`✅ Connection status for ${appName} (attempt ${retryCount + 1}):`, connection?.status);
+
+                         if (connection?.status === "ACTIVE") {
+               // Update connection status to ACTIVE
+               setConnectionStatuses((prev) => {
+                 const newMap = new Map(prev);
+                 newMap.set(appName, "ACTIVE");
+                 return newMap;
+               });
+
+               // Set app as activated by default when first connected
+               setActivationStatuses((prev) => {
+                 const newMap = new Map(prev);
+                 if (!newMap.has(appName)) {
+                   newMap.set(appName, true); // Default to activated
+                 }
+                 return newMap;
+               });
+
+               // Update connection ID
+               if (connection?.id) {
+                 setConnectionIds((prev) => {
+                   const newMap = new Map(prev);
+                   newMap.set(appName, connection.id);
+                   return newMap;
+                 });
+                 console.log(`✅ Successfully connected ${appName} with ID: ${connection.id}`);
+               }
+            } else if (retryCount < 3) {
+              // If not active yet and we haven't exceeded retry limit, try again
+              console.log(`⏳ Connection not active yet for ${appName}, retrying in 2 seconds... (${retryCount + 1}/3)`);
+              setTimeout(() => checkConnectionStatus(retryCount + 1), 2000);
+            } else {
+              // Max retries reached, assume connection failed
+              console.log(`❌ Connection failed for ${appName} after ${retryCount + 1} attempts`);
+              setConnectionStatuses((prev) => {
+                const newMap = new Map(prev);
+                newMap.set(appName, "INACTIVE");
+                return newMap;
+              });
+            }
+          } catch (statusError) {
+            console.log(`❌ Error checking connection status for ${appName}:`, statusError);
+            if (retryCount < 3) {
+              setTimeout(() => checkConnectionStatus(retryCount + 1), 2000);
+            } else {
+              setConnectionStatuses((prev) => {
+                const newMap = new Map(prev);
+                newMap.set(appName, "INACTIVE");
+                return newMap;
+              });
+            }
           }
-        } catch (error) {
-          console.log(
-            `Could not check connection status for ${appName}:`,
-            error
-          );
-        } finally {
-          setProcessingApps((prev) => {
-            const newSet = new Set(prev);
-            newSet.delete(appName);
-            return newSet;
-          });
-        }
-      }, 2000);
+        };
+
+        // Start checking connection status
+        await checkConnectionStatus();
+      } else {
+        console.log(`❌ OAuth failed or was cancelled for ${appName}`);
+        setConnectionStatuses((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(appName, "INACTIVE");
+          return newMap;
+        });
+      }
     } catch (error) {
       console.error(`Failed to connect ${appName}:`, error);
+      setConnectionStatuses((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(appName, "INACTIVE");
+        return newMap;
+      });
+    } finally {
+      // Always remove from processing apps
       setProcessingApps((prev) => {
         const newSet = new Set(prev);
         newSet.delete(appName);
@@ -372,6 +449,13 @@ export function ComposioAppList() {
         });
 
         setSelectedTools((prev) => {
+          const newMap = new Map(prev);
+          newMap.delete(appName);
+          return newMap;
+        });
+
+        // Clear activation status when disconnecting
+        setActivationStatuses((prev) => {
           const newMap = new Map(prev);
           newMap.delete(appName);
           return newMap;
@@ -453,6 +537,11 @@ export function ComposioAppList() {
           const isLoadingTools = loadingTools.has(app.name);
           const appTools = toolsByApp.get(app.name) || [];
           const selectedAppTools = selectedTools.get(app.name) || new Set();
+          
+          // New activation logic
+          const isActivated = activationStatuses.get(app.name) !== false; // default is true
+          const showToggleAsOn = isConnected ? isActivated : false;
+          const showToolsSection = isConnected && isActivated && isExpanded;
 
           return (
             <div key={app.name} className="app-item-container">
@@ -468,7 +557,7 @@ export function ComposioAppList() {
                 </span>
 
                 <div className="connection-controls">
-                  {isConnected && (
+                  {isConnected && isActivated && (
                     <button
                       className={`expand-arrow ${isExpanded ? "expanded" : ""}`}
                       onClick={() => toggleAppExpansion(app.name)}
@@ -483,7 +572,11 @@ export function ComposioAppList() {
                   <div className="connection-toggle">
                     {isConnected ? (
                       <>
-                        <div className="toggle-switch connected disabled">
+                        <div 
+                          className={`toggle-switch connected ${showToggleAsOn ? "activated" : "deactivated"}`}
+                          onClick={() => !isProcessing && toggleAppActivation(app.name)}
+                          title={isActivated ? "Disable tools" : "Enable tools"}
+                        >
                           <div className="toggle-slider"></div>
                         </div>
                         <button
@@ -501,6 +594,7 @@ export function ComposioAppList() {
                           isProcessing ? "processing" : ""
                         }`}
                         onClick={() => !isProcessing && handleConnect(app.name)}
+                        title="Connect app"
                       >
                         <div className="toggle-slider"></div>
                         {isProcessing && (
@@ -513,7 +607,7 @@ export function ComposioAppList() {
               </div>
 
               {/* Collapsible Tools Section */}
-              {isConnected && isExpanded && (
+              {showToolsSection && (
                 <div className="tools-section">
                   {isLoadingTools ? (
                     <div className="tools-loading">

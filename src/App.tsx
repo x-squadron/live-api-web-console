@@ -47,90 +47,116 @@ function App() {
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
 
   const { client, setConfig, setModel } = useLiveAPIContext();
-  const { getAllSelectedToolNames } = useSelectedToolsContext();
+  const { getAllSelectedToolNames, getActiveSelectedToolNames, selectedTools, activationStatuses } = useSelectedToolsContext();
 
+  // Initialize composio toolset and model (runs once)
   useEffect(() => {
     console.log("[App] init");
-
-    const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY!;
-
-    if (!composioApiKey) {
-      console.error("REACT_APP_COMPOSIO_API_KEY is not set");
-      return;
-    }
-
-    const composioToolset = new OpenAIToolSet({
-      apiKey: composioApiKey,
-    });
-    const composio = new Composio({
-      apiKey: composioApiKey,
-    });
-    // setModel("models/gemini-2.0-flash-exp");
-    // model: "models/gemini-2.5-flash-exp",
     setModel("models/gemini-2.5-flash-preview-native-audio-dialog");
+  }, [setModel]);
 
-    (async () => {
-      console.log("[App] fetching composio tools");
-      const apps = await composio.apps.list();
-      console.log("[Composio] fetching composio available apps:", apps);
+  // Update tools configuration whenever selectedTools changes
+  useEffect(() => {
+    const updateToolsConfig = async () => {
+      console.log("[App] updating tools configuration");
+      console.log("[App] selectedTools state:", selectedTools);
 
-      // Get selected tools from context instead of hardcoded list
-      const selectedToolNames = getAllSelectedToolNames();
-      console.log("[App] Selected tools from context:", selectedToolNames);
+      const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY!;
+
+      if (!composioApiKey) {
+        console.error("REACT_APP_COMPOSIO_API_KEY is not set");
+        return;
+      }
+
+      const composioToolset = new OpenAIToolSet({
+        apiKey: composioApiKey,
+      });
+
+      // Get selected tools from context (only from activated apps)
+      const selectedToolNames = getActiveSelectedToolNames();
+      console.log("[App] Active selected tools from context:", selectedToolNames);
 
       // Only load tools that are actually selected from the UI
-      const toolsToLoad = selectedToolNames;
-
-      let defaultTools: Tool[] = [];
-      if (toolsToLoad.length > 0) {
-        defaultTools = await getDefaultTools(composioToolset, toolsToLoad);
+      let composioTools: Tool[] = [];
+      if (selectedToolNames.length > 0) {
+        composioTools = await getDefaultTools(composioToolset, selectedToolNames);
       }
 
       setConfig((config: LiveConnectConfig) => {
-        const tools = [...(config.tools ?? [])]
+        // Get existing tools from config
+        const existingTools = [...(config.tools ?? [])]
           .filter(isFunctionDeclarationsTool)
           .filter(Boolean)
           .map((tool) => tool.functionDeclarations ?? [])
           .flat();
 
-        console.log("[App] configured tool names: ", tools);
+        console.log("[App] existing tool names: ", existingTools.map(t => t.name));
 
-        const defaultToolDeclarations = defaultTools
+        // Get composio tool declarations
+        const composioToolDeclarations = composioTools
           .filter(isFunctionDeclarationsTool)
           .filter(Boolean)
           .map((tool) => tool.functionDeclarations ?? [])
           .flat();
 
-        console.log("[App] composio tool names: ", defaultToolDeclarations);
+        console.log("[App] composio tool names: ", composioToolDeclarations.map(t => t.name));
 
+        // Define known built-in tool names that should always be preserved
+        const builtInToolNames = [
+          'look_at_lists',
+          'edit_list', 
+          'remove_list',
+          'create_list',
+          'render_altair'
+        ];
+
+        // Filter existing tools to only include built-in tools (not composio tools)
+        const builtInTools = existingTools.filter(tool => 
+          builtInToolNames.includes(tool.name || '')
+        );
+
+        console.log("[App] built-in tools preserved: ", builtInTools.map(t => t.name));
+
+        // Combine built-in tools with currently selected composio tools
+        const allTools = [...builtInTools, ...composioToolDeclarations];
+        
+        // Remove duplicates by name
         const uniqueTools = [
           ...new Map(
-            [...tools, ...defaultToolDeclarations].map((tool) => [
-              tool.name,
-              tool,
-            ])
+            allTools.map((tool) => [tool.name, tool])
           ).values(),
         ];
 
+        console.log("[App] final unique tools:", uniqueTools.map(t => t.name));
+
         // Create dynamic system instruction based on selected tools
         const toolsList =
-          toolsToLoad.length > 0
-            ? toolsToLoad
+          selectedToolNames.length > 0
+            ? selectedToolNames
                 .map((tool) => `• "${tool}"`)
                 .join("\n                       ")
             : "";
 
         const systemInstructionText =
-          // toolsToLoad.length > 0 ?
           `EN: You are a helpful assistant that can access and manage various tools and services. Please always use one of these available tools when asked about anything related to their functionality, never invent data.
                        ${toolsList}
                        FR: Tu es un assistant utile qui peut accéder à divers outils et services. Utilise toujours l'un des outils disponibles suivants lorsqu'on te pose une question liée à leur fonctionnalité, et ne crée jamais de données inventées.
                        ${toolsList}
                        AR: أنت مساعد ذكي يمكنه الوصول إلى أدوات وخدمات مختلفة. يُرجى استخدام أحد هذه الأدوات المتاحة دائمًا عند سؤالك عن أي شيء متعلق بوظائفها، ولا تخترع بيانات من نفسك.
                        ${toolsList}`;
-        // : `EN: You are a helpful assistant. Currently no external tools are selected, so please provide general assistance based on your knowledge.
-        //            FR: Tu es un assistant utile. Actuellement, aucun outil externe n'est sélectionné, alors fournis une assistance générale basée sur tes connaissances.
-        //            AR: أنت مساعد ذكي. حاليًا لم يتم تحديد أي أدوات خارجية، لذا يُرجى تقديم المساعدة العامة بناءً على معرفتك.`;
+
+        // Get base system instruction parts (excluding our dynamic tool instruction)
+        const baseInstructionParts = (() => {
+          if (!config.systemInstruction) return [];
+          if (typeof config.systemInstruction === "string") return [];
+          if (Array.isArray(config.systemInstruction)) return [];
+          if ("parts" in config.systemInstruction && Array.isArray(config.systemInstruction.parts)) {
+            return config.systemInstruction.parts.filter((part: any) => 
+              !part.text?.includes("You are a helpful assistant that can access and manage various tools")
+            );
+          }
+          return [];
+        })();
 
         return {
           ...config,
@@ -140,8 +166,7 @@ function App() {
           },
           systemInstruction: {
             parts: [
-              // @ts-ignore
-              ...(config.systemInstruction?.parts ?? []),
+              ...baseInstructionParts,
               {
                 text: systemInstructionText,
               },
@@ -150,7 +175,23 @@ function App() {
           tools: [{ functionDeclarations: uniqueTools }],
         };
       });
-    })();
+    };
+
+    updateToolsConfig();
+  }, [selectedTools, activationStatuses, getActiveSelectedToolNames, setConfig]);
+
+  // Set up tool call handler (runs once)
+  useEffect(() => {
+    const composioApiKey = process.env.REACT_APP_COMPOSIO_API_KEY!;
+    
+    if (!composioApiKey) {
+      console.error("REACT_APP_COMPOSIO_API_KEY is not set");
+      return;
+    }
+
+    const composioToolset = new OpenAIToolSet({
+      apiKey: composioApiKey,
+    });
 
     const onToolCall = async (toolCall: LiveServerToolCall) => {
       const fCalls = toolCall.functionCalls;
@@ -168,12 +209,12 @@ function App() {
           };
           let handled = true;
 
-          // Get currently selected tools
-          const selectedToolNames = getAllSelectedToolNames();
+          // Get currently active selected tools (only from activated apps)
+          const activeSelectedToolNames = getActiveSelectedToolNames();
 
-          // Check if this tool is in our selected tools
+          // Check if this tool is in our active selected tools
           const isSelectedTool =
-            fCall.name && selectedToolNames.includes(fCall.name);
+            fCall.name && activeSelectedToolNames.includes(fCall.name);
 
           if (isSelectedTool) {
             try {
@@ -187,9 +228,10 @@ function App() {
               };
             }
           } else {
-            // Tool not selected
+            // Tool not selected - check if it's a built-in tool (GenList, Altair, etc.)
+            // Let other components handle their own tools
             handled = false;
-            console.log(`[App] Tool '${fCall.name}' not in selected tools`);
+            console.log(`[App] Tool '${fCall.name}' not in selected composio tools, letting other handlers process it`);
           }
 
           if (handled && functionResponse) {
@@ -239,7 +281,7 @@ function App() {
     return () => {
       client.off("toolcall", onToolCall);
     };
-  }, [setConfig, setModel, client, getAllSelectedToolNames]);
+  }, [client, getActiveSelectedToolNames]);
 
   return (
     <div className="App">

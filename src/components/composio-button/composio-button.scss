@@ -222,16 +222,26 @@
       }
 
       &.connected {
-        background: #22c55e;
+        &.activated {
+          background: #22c55e;
 
-        .toggle-slider {
-          transform: translateX(16px);
-          background: white;
+          .toggle-slider {
+            transform: translateX(16px);
+            background: white;
+          }
         }
 
-        &.disabled {
-          cursor: not-allowed;
-          opacity: 0.8;
+        &.deactivated {
+          background: var(--Neutral-40);
+
+          .toggle-slider {
+            transform: translateX(2px);
+            background: var(--Neutral-60);
+          }
+
+          &:hover {
+            background: var(--Neutral-50);
+          }
         }
       }
 

@@ -21,7 +21,12 @@ export type SelectedToolsContextType = {
   setSelectedTools: React.Dispatch<
     React.SetStateAction<Map<string, Set<string>>>
   >;
+  activationStatuses: Map<string, boolean>;
+  setActivationStatuses: React.Dispatch<
+    React.SetStateAction<Map<string, boolean>>
+  >;
   getAllSelectedToolNames: () => string[];
+  getActiveSelectedToolNames: () => string[];
 };
 
 const SelectedToolsContext = createContext<
@@ -38,6 +43,9 @@ export const SelectedToolsProvider: FC<SelectedToolsProviderProps> = ({
   const [selectedTools, setSelectedTools] = useState<Map<string, Set<string>>>(
     new Map()
   );
+  const [activationStatuses, setActivationStatuses] = useState<Map<string, boolean>>(
+    new Map()
+  );
 
   const getAllSelectedToolNames = (): string[] => {
     const allToolNames: string[] = [];
@@ -49,10 +57,27 @@ export const SelectedToolsProvider: FC<SelectedToolsProviderProps> = ({
     return allToolNames;
   };
 
+  const getActiveSelectedToolNames = (): string[] => {
+    const activeToolNames: string[] = [];
+    selectedTools.forEach((toolSet, appName) => {
+      // Only include tools from activated apps (default is true if not set)
+      const isAppActivated = activationStatuses.get(appName) !== false;
+      if (isAppActivated) {
+        toolSet.forEach((toolName) => {
+          activeToolNames.push(toolName);
+        });
+      }
+    });
+    return activeToolNames;
+  };
+
   const contextValue: SelectedToolsContextType = {
     selectedTools,
     setSelectedTools,
+    activationStatuses,
+    setActivationStatuses,
     getAllSelectedToolNames,
+    getActiveSelectedToolNames,
   };
 
   return (

@@ -70,53 +70,53 @@ export function ComposioAppList() {
 
   // Check connection status for all apps using entity.getConnection
   const fetchAllConnectionStatuses = useCallback(
-    async (apps: App[]) => {
-      const statusMap = new Map<string, ConnectionStatus>();
-      const idMap = new Map<string, string>();
+  async (apps: App[]) => {
+    const statusMap = new Map<string, ConnectionStatus>();
+    const idMap = new Map<string, string>();
 
-      let entity;
-      try {
-        entity = await toolset.getEntity("default");
-      } catch (err) {
-        console.error("❌ Failed to get Composio entity:", err);
-        apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
-        setConnectionStatuses(statusMap);
-        return;
+    let entity;
+    try {
+      entity = await toolset.getEntity("default");
+    } catch (err) {
+      console.error("❌ Failed to get Composio entity:", err);
+      apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
+      setConnectionStatuses(statusMap);
+      return;
+    }
+
+    try {
+      const allConnections = await entity.getConnections();
+
+      // Build a lookup table for connected apps
+      const connectedAppMap = new Map<string, string>(); // appName -> connectionId
+
+      for (const conn of allConnections) {
+        if (conn.status === "ACTIVE" && conn.appName && conn.id) {
+          connectedAppMap.set(conn.appName.toLowerCase(), conn.id);
+        }
       }
 
-      let errorCount = 0;
-      const maxErrorsAllowed = 5;
+      // Match apps with connections
+      apps.forEach((app) => {
+        const appKey = app.name.toLowerCase();
+        if (connectedAppMap.has(appKey)) {
+          statusMap.set(app.name, "ACTIVE");
+          idMap.set(app.name, connectedAppMap.get(appKey)!);
+        } else {
+          statusMap.set(app.name, "INACTIVE");
+        }
+      });
+    } catch (err) {
+      console.error("❌ Error fetching connections:", err);
+      apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
+    }
 
-      await Promise.all(
-        apps.map(async (app) => {
-          try {
-            const connection = await entity.getConnection({
-              app: app.name.toLowerCase(),
-            });
-            if (connection?.status === "ACTIVE" && connection?.id) {
-              statusMap.set(app.name, "ACTIVE");
-              idMap.set(app.name, connection.id);
-            } else {
-              statusMap.set(app.name, "INACTIVE");
-            }
-          } catch (err) {
-            errorCount++;
-            if (errorCount > maxErrorsAllowed) {
-              console.warn(
-                "⚠️ Too many connection errors. Halting further checks to avoid spamming logs."
-              );
-              return;
-            }
-            statusMap.set(app.name, "INACTIVE");
-          }
-        })
-      );
+    setConnectionStatuses(statusMap);
+    setConnectionIds(idMap);
+  },
+  [toolset]
+);
 
-      setConnectionStatuses(statusMap);
-      setConnectionIds(idMap);
-    },
-    [toolset]
-  );
 
   // Fetch tools for a specific app
   const fetchToolsForApp = useCallback(
@@ -296,106 +296,65 @@ export function ComposioAppList() {
   ]);
 
   const handleConnect = async (appName: string) => {
-    if (processingApps.has(appName)) return;
+  if (processingApps.has(appName)) return;
 
-    setProcessingApps((prev) => new Set(prev.add(appName)));
+  setProcessingApps((prev) => new Set(prev.add(appName)));
 
-    try {
-      // Trigger OAuth connection and wait for popup to close
-      const oauthSuccess = await connectToApp(appName.toLowerCase());
+  try {
+    const success = await connectToApp(appName.toLowerCase());
 
-      if (oauthSuccess) {
-        console.log(`🔄 OAuth popup closed for ${appName}, checking connection status...`);
-        
-        // Check connection status after OAuth popup closes
-        const checkConnectionStatus = async (retryCount = 0) => {
-          try {
-            const entity = await toolset.getEntity("default");
-            const connection = await entity.getConnection({
-              app: appName.toLowerCase(),
-            });
+    if (success) {
+      const entity = await toolset.getEntity("default");
+      const connection = await entity.getConnection({ app: appName.toLowerCase() });
 
-            console.log(`✅ Connection status for ${appName} (attempt ${retryCount + 1}):`, connection?.status);
+      // ✅ Update connection status
+      setConnectionStatuses((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(appName, "ACTIVE");
+        return newMap;
+      });
 
-                         if (connection?.status === "ACTIVE") {
-               // Update connection status to ACTIVE
-               setConnectionStatuses((prev) => {
-                 const newMap = new Map(prev);
-                 newMap.set(appName, "ACTIVE");
-                 return newMap;
-               });
+      // ✅ Activate app by default
+      setActivationStatuses((prev) => {
+        const newMap = new Map(prev);
+        if (!newMap.has(appName)) {
+          newMap.set(appName, true);
+        }
+        return newMap;
+      });
 
-               // Set app as activated by default when first connected
-               setActivationStatuses((prev) => {
-                 const newMap = new Map(prev);
-                 if (!newMap.has(appName)) {
-                   newMap.set(appName, true); // Default to activated
-                 }
-                 return newMap;
-               });
-
-               // Update connection ID
-               if (connection?.id) {
-                 setConnectionIds((prev) => {
-                   const newMap = new Map(prev);
-                   newMap.set(appName, connection.id);
-                   return newMap;
-                 });
-                 console.log(`✅ Successfully connected ${appName} with ID: ${connection.id}`);
-               }
-            } else if (retryCount < 3) {
-              // If not active yet and we haven't exceeded retry limit, try again
-              console.log(`⏳ Connection not active yet for ${appName}, retrying in 2 seconds... (${retryCount + 1}/3)`);
-              setTimeout(() => checkConnectionStatus(retryCount + 1), 2000);
-            } else {
-              // Max retries reached, assume connection failed
-              console.log(`❌ Connection failed for ${appName} after ${retryCount + 1} attempts`);
-              setConnectionStatuses((prev) => {
-                const newMap = new Map(prev);
-                newMap.set(appName, "INACTIVE");
-                return newMap;
-              });
-            }
-          } catch (statusError) {
-            console.log(`❌ Error checking connection status for ${appName}:`, statusError);
-            if (retryCount < 3) {
-              setTimeout(() => checkConnectionStatus(retryCount + 1), 2000);
-            } else {
-              setConnectionStatuses((prev) => {
-                const newMap = new Map(prev);
-                newMap.set(appName, "INACTIVE");
-                return newMap;
-              });
-            }
-          }
-        };
-
-        // Start checking connection status
-        await checkConnectionStatus();
-      } else {
-        console.log(`❌ OAuth failed or was cancelled for ${appName}`);
-        setConnectionStatuses((prev) => {
+      // ✅ Store connection ID
+      if (connection?.id) {
+        setConnectionIds((prev) => {
           const newMap = new Map(prev);
-          newMap.set(appName, "INACTIVE");
+          newMap.set(appName, connection.id);
           return newMap;
         });
+        console.log(`✅ Connected to ${appName} with ID: ${connection.id}`);
       }
-    } catch (error) {
-      console.error(`Failed to connect ${appName}:`, error);
+    } else {
+      console.log(`❌ Connection failed or canceled for ${appName}`);
       setConnectionStatuses((prev) => {
         const newMap = new Map(prev);
         newMap.set(appName, "INACTIVE");
         return newMap;
       });
-    } finally {
-      // Always remove from processing apps
-      setProcessingApps((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(appName);
-        return newSet;
-      });
     }
-  };
+  } catch (error) {
+    console.error(`❌ Error during connection flow for ${appName}:`, error);
+    setConnectionStatuses((prev) => {
+      const newMap = new Map(prev);
+      newMap.set(appName, "INACTIVE");
+      return newMap;
+    });
+  } finally {
+    setProcessingApps((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(appName);
+      return newSet;
+    });
+  }
+};
 
   const handleDisconnect = async (appName: string) => {
     if (processingApps.has(appName)) return;

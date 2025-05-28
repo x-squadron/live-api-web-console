@@ -38,7 +38,6 @@ import {
 } from "@google/genai";
 import { Alert } from "./components/alerts/Alert";
 import { ToastContainer, toast } from "react-tiny-toast";
-import translate from "@vitalets/google-translate-api";
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture

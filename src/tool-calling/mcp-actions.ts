@@ -1,7 +1,1 @@
-export type MCP_ACTIONS =
-  | "GOOGLECALENDAR_FIND_FREE_SLOTS"
-  | "GOOGLECALENDAR_FIND_EVENT"
-  | "GOOGLECALENDAR_CREATE_EVENT"
-  | "GOOGLECALENDAR_DELETE_EVENT"
-  | "CALENDLY_GET_CURRENT_USER"
-  | string; // Allow any dynamic tool name
+export type MCP_ACTIONS = string;

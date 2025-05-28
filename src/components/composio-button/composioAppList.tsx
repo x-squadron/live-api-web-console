@@ -5,7 +5,6 @@ import "./composio-button.scss";
 import { connectToApp } from "./connectToApp";
 import { useSelectedToolsContext } from "../../contexts/SelectedToolsContext";
 
-// Define what you need to render
 type App = {
   name: string;
   logo: string;
@@ -45,7 +44,14 @@ export function ComposioAppList() {
   const [loadingTools, setLoadingTools] = useState<Set<string>>(new Set());
 
   // Use global context for selected tools and activation statuses
-  const { selectedTools, setSelectedTools, activationStatuses, setActivationStatuses } = useSelectedToolsContext();
+  const {
+    selectedTools,
+    setSelectedTools,
+    toolDescriptions,
+    setToolDescriptions,
+    activationStatuses,
+    setActivationStatuses,
+  } = useSelectedToolsContext();
 
   const toolset = useMemo(
     () =>
@@ -70,53 +76,52 @@ export function ComposioAppList() {
 
   // Check connection status for all apps using entity.getConnection
   const fetchAllConnectionStatuses = useCallback(
-  async (apps: App[]) => {
-    const statusMap = new Map<string, ConnectionStatus>();
-    const idMap = new Map<string, string>();
+    async (apps: App[]) => {
+      const statusMap = new Map<string, ConnectionStatus>();
+      const idMap = new Map<string, string>();
 
-    let entity;
-    try {
-      entity = await toolset.getEntity("default");
-    } catch (err) {
-      console.error("❌ Failed to get Composio entity:", err);
-      apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
-      setConnectionStatuses(statusMap);
-      return;
-    }
-
-    try {
-      const allConnections = await entity.getConnections();
-
-      // Build a lookup table for connected apps
-      const connectedAppMap = new Map<string, string>(); // appName -> connectionId
-
-      for (const conn of allConnections) {
-        if (conn.status === "ACTIVE" && conn.appName && conn.id) {
-          connectedAppMap.set(conn.appName.toLowerCase(), conn.id);
-        }
+      let entity;
+      try {
+        entity = await toolset.getEntity("default");
+      } catch (err) {
+        console.error("❌ Failed to get Composio entity:", err);
+        apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
+        setConnectionStatuses(statusMap);
+        return;
       }
 
-      // Match apps with connections
-      apps.forEach((app) => {
-        const appKey = app.name.toLowerCase();
-        if (connectedAppMap.has(appKey)) {
-          statusMap.set(app.name, "ACTIVE");
-          idMap.set(app.name, connectedAppMap.get(appKey)!);
-        } else {
-          statusMap.set(app.name, "INACTIVE");
+      try {
+        const allConnections = await entity.getConnections();
+
+        // Build a lookup table for connected apps
+        const connectedAppMap = new Map<string, string>(); // appName -> connectionId
+
+        for (const conn of allConnections) {
+          if (conn.status === "ACTIVE" && conn.appName && conn.id) {
+            connectedAppMap.set(conn.appName.toLowerCase(), conn.id);
+          }
         }
-      });
-    } catch (err) {
-      console.error("❌ Error fetching connections:", err);
-      apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
-    }
 
-    setConnectionStatuses(statusMap);
-    setConnectionIds(idMap);
-  },
-  [toolset]
-);
+        // Match apps with connections
+        apps.forEach((app) => {
+          const appKey = app.name.toLowerCase();
+          if (connectedAppMap.has(appKey)) {
+            statusMap.set(app.name, "ACTIVE");
+            idMap.set(app.name, connectedAppMap.get(appKey)!);
+          } else {
+            statusMap.set(app.name, "INACTIVE");
+          }
+        });
+      } catch (err) {
+        console.error("❌ Error fetching connections:", err);
+        apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
+      }
 
+      setConnectionStatuses(statusMap);
+      setConnectionIds(idMap);
+    },
+    [toolset]
+  );
 
   // Fetch tools for a specific app
   const fetchToolsForApp = useCallback(
@@ -142,6 +147,20 @@ export function ComposioAppList() {
         );
 
         setToolsByApp((prev) => new Map(prev.set(appName, tools)));
+
+        // Store tool descriptions in global context
+        setToolDescriptions((prev) => {
+          const newMap = new Map(prev);
+          tools.forEach((tool) => {
+            newMap.set(tool.name, {
+              name: tool.name,
+              description: tool.description,
+              appName: tool.appName,
+            });
+          });
+          return newMap;
+        });
+
         console.log(`✅ Fetched ${tools.length} tools for ${appName}`);
       } catch (error) {
         console.error(`❌ Failed to fetch tools for ${appName}:`, error);
@@ -154,7 +173,7 @@ export function ComposioAppList() {
         });
       }
     },
-    [toolset, toolsByApp, loadingTools]
+    [toolset, toolsByApp, loadingTools, setToolDescriptions]
   );
 
   // Toggle app expansion
@@ -205,11 +224,11 @@ export function ComposioAppList() {
         const newMap = new Map(prev);
         const currentStatus = newMap.get(appName) !== false; // default is true (activated)
         const newStatus = !currentStatus;
-        
+
         newMap.set(appName, newStatus);
-        
-        console.log(`🔄 ${appName} ${newStatus ? 'activated' : 'deactivated'}`);
-        
+
+        console.log(`🔄 ${appName} ${newStatus ? "activated" : "deactivated"}`);
+
         // If deactivating, only collapse the tools section (preserve selectedTools)
         if (!newStatus) {
           // Collapse the app if it was expanded
@@ -218,10 +237,12 @@ export function ComposioAppList() {
             newSet.delete(appName);
             return newSet;
           });
-          
-          console.log(`🧹 Collapsed tools section for deactivated app: ${appName} (selections preserved)`);
+
+          console.log(
+            `🧹 Collapsed tools section for deactivated app: ${appName} (selections preserved)`
+          );
         }
-        
+
         return newMap;
       });
     },
@@ -296,65 +317,67 @@ export function ComposioAppList() {
   ]);
 
   const handleConnect = async (appName: string) => {
-  if (processingApps.has(appName)) return;
+    if (processingApps.has(appName)) return;
 
-  setProcessingApps((prev) => new Set(prev.add(appName)));
+    setProcessingApps((prev) => new Set(prev.add(appName)));
 
-  try {
-    const success = await connectToApp(appName.toLowerCase());
+    try {
+      const success = await connectToApp(appName.toLowerCase());
 
-    if (success) {
-      const entity = await toolset.getEntity("default");
-      const connection = await entity.getConnection({ app: appName.toLowerCase() });
+      if (success) {
+        const entity = await toolset.getEntity("default");
+        const connection = await entity.getConnection({
+          app: appName.toLowerCase(),
+        });
 
-      // ✅ Update connection status
-      setConnectionStatuses((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(appName, "ACTIVE");
-        return newMap;
-      });
-
-      // ✅ Activate app by default
-      setActivationStatuses((prev) => {
-        const newMap = new Map(prev);
-        if (!newMap.has(appName)) {
-          newMap.set(appName, true);
-        }
-        return newMap;
-      });
-
-      // ✅ Store connection ID
-      if (connection?.id) {
-        setConnectionIds((prev) => {
+        // ✅ Update connection status
+        setConnectionStatuses((prev) => {
           const newMap = new Map(prev);
-          newMap.set(appName, connection.id);
+          newMap.set(appName, "ACTIVE");
           return newMap;
         });
-        console.log(`✅ Connected to ${appName} with ID: ${connection.id}`);
+
+        // ✅ Activate app by default
+        setActivationStatuses((prev) => {
+          const newMap = new Map(prev);
+          if (!newMap.has(appName)) {
+            newMap.set(appName, true);
+          }
+          return newMap;
+        });
+
+        // ✅ Store connection ID
+        if (connection?.id) {
+          setConnectionIds((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(appName, connection.id);
+            return newMap;
+          });
+          console.log(`✅ Connected to ${appName} with ID: ${connection.id}`);
+        }
+      } else {
+        console.log(`❌ Connection failed or canceled for ${appName}`);
+        setConnectionStatuses((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(appName, "INACTIVE");
+          return newMap;
+        });
       }
-    } else {
-      console.log(`❌ Connection failed or canceled for ${appName}`);
+    } catch (error) {
+      console.error(`❌ Error during connection flow for ${appName}:`, error);
       setConnectionStatuses((prev) => {
         const newMap = new Map(prev);
         newMap.set(appName, "INACTIVE");
         return newMap;
       });
+    } finally {
+      setProcessingApps((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(appName);
+        return newSet;
+      });
     }
-  } catch (error) {
-    console.error(`❌ Error during connection flow for ${appName}:`, error);
-    setConnectionStatuses((prev) => {
-      const newMap = new Map(prev);
-      newMap.set(appName, "INACTIVE");
-      return newMap;
-    });
-  } finally {
-    setProcessingApps((prev) => {
-      const newSet = new Set(prev);
-      newSet.delete(appName);
-      return newSet;
-    });
-  }
-};
+  };
 
   const handleDisconnect = async (appName: string) => {
     if (processingApps.has(appName)) return;
@@ -496,7 +519,7 @@ export function ComposioAppList() {
           const isLoadingTools = loadingTools.has(app.name);
           const appTools = toolsByApp.get(app.name) || [];
           const selectedAppTools = selectedTools.get(app.name) || new Set();
-          
+
           // New activation logic
           const isActivated = activationStatuses.get(app.name) !== false; // default is true
           const showToggleAsOn = isConnected ? isActivated : false;
@@ -513,6 +536,14 @@ export function ComposioAppList() {
                   <span className="app-name">{app.name}</span>
                   <span className="pipe">|</span>
                   <span className="app-categories">{app.categories}</span>
+                  <span className="pipe">|</span>
+                  {isConnected && (
+                    <span className="tools-header">
+                      <span className="selected-count">
+                        • {selectedAppTools.size} selected tools
+                      </span>
+                    </span>
+                  )}
                 </span>
 
                 <div className="connection-controls">
@@ -531,13 +562,6 @@ export function ComposioAppList() {
                   <div className="connection-toggle">
                     {isConnected ? (
                       <>
-                        <div 
-                          className={`toggle-switch connected ${showToggleAsOn ? "activated" : "deactivated"}`}
-                          onClick={() => !isProcessing && toggleAppActivation(app.name)}
-                          title={isActivated ? "Disable tools" : "Enable tools"}
-                        >
-                          <div className="toggle-slider"></div>
-                        </div>
                         <button
                           className="disconnect-btn"
                           onClick={() => handleDisconnect(app.name)}
@@ -546,6 +570,17 @@ export function ComposioAppList() {
                         >
                           {isProcessing ? "⏳" : "🗑️"}
                         </button>
+                        <div
+                          className={`toggle-switch connected ${
+                            showToggleAsOn ? "activated" : "deactivated"
+                          }`}
+                          onClick={() =>
+                            !isProcessing && toggleAppActivation(app.name)
+                          }
+                          title={isActivated ? "Disable tools" : "Enable tools"}
+                        >
+                          <div className="toggle-slider"></div>
+                        </div>
                       </>
                     ) : (
                       <div
@@ -576,11 +611,11 @@ export function ComposioAppList() {
                     <div className="tools-list">
                       <div className="tools-header">
                         Available Tools ({appTools.length})
-                        {selectedAppTools.size > 0 && (
+                        {/* {selectedAppTools.size > 0 && (
                           <span className="selected-count">
                             • {selectedAppTools.size} selected
                           </span>
-                        )}
+                        )} */}
                       </div>
                       {appTools.map((tool) => (
                         <div key={tool.name} className="tool-item">

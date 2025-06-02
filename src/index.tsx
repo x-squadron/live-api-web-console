@@ -20,6 +20,7 @@ import "./index.css";
 import App from "./App";
 import reportWebVitals from "./reportWebVitals";
 import { LiveAPIProvider } from "./contexts/LiveAPIContext";
+import { SelectedToolsProvider } from "./contexts/SelectedToolsContext";
 
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
@@ -35,9 +36,11 @@ if (typeof API_KEY !== "string") {
 
 root.render(
   <React.StrictMode>
-    <LiveAPIProvider options={{ apiKey: API_KEY }}>
-      <App />
-    </LiveAPIProvider>
+    <SelectedToolsProvider>
+      <LiveAPIProvider options={{ apiKey: API_KEY }}>
+        <App />
+      </LiveAPIProvider>
+    </SelectedToolsProvider>
   </React.StrictMode>
 );
 

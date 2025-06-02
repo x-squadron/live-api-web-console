@@ -1,3 +1,4 @@
+//settings-dialog.scss
 .select-group {
   display: flex;
   flex-direction: column;
@@ -100,9 +101,7 @@
     background-color: var(--Neutral-15);
     color: var(--Neutral-80);
     margin-top: 8px;
-    font-family:
-      Google Sans,
-      sans-serif;
+    font-family: Google Sans, sans-serif;
     line-height: 21px;
     font-size: 16px;
     field-sizing: content;

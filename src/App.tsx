@@ -119,29 +119,6 @@ function App() {
           composioToolDeclarations.map((t) => t.name)
         );
 
-        // // Define known built-in tool names that should always be preserved
-        // const builtInToolNames = [
-        //   "look_at_lists",
-        //   "edit_list",
-        //   "remove_list",
-        //   "create_list",
-        //   "render_altair",
-        // ];
-
-        // // Filter existing tools to only include built-in tools (not composio tools)
-        // const builtInTools = existingTools.filter((tool) =>
-        //   builtInToolNames.includes(tool.name || "")
-        // );
-        // const builtInToolsWithDescriptions = builtInTools.map((tool) => ({
-        //   name: tool.name,
-        //   description: tool.description || "No description available",
-        // }));
-
-        // console.log(
-        //   "[App] built-in tools preserved: ",
-        //   builtInTools.map((t) => t.name)
-        // );
-
         // // Combine built-in tools with currently selected composio tools
         const allTools = [...existingTools, ...composioToolDeclarations];
 

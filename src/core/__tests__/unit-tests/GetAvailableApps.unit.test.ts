@@ -1,14 +1,23 @@
 import { GetAvailableApps } from "@core";
+import { InMemoryApplicationsGateway } from "@core/adapters";
+import { Application } from "@core/domain";
 
 describe("GetAvailableApps", () => {
   let sut: GetAvailableApps;
 
-  beforeEach(() => {
-    sut = new GetAvailableApps();
+  it("Should be able to list available apps", async () => {
+    const apps: Application[] = [
+      new Application("GMAIL"),
+      new Application("LINEAR"),
+    ];
+    givenExistingApps(apps);
+    const result = await sut.execute({});
+    expect(result).toStrictEqual(apps);
   });
 
-  it("Should be able to list available apps", async () => {
-    const result = await sut.execute({});
-    expect(result).toBe([]);
-  });
+  function givenExistingApps(apps: Application[]) {
+    let appsGateway: InMemoryApplicationsGateway =
+      new InMemoryApplicationsGateway(apps);
+    sut = new GetAvailableApps(appsGateway);
+  }
 });

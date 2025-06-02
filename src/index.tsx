@@ -21,6 +21,7 @@ import App from "./App";
 import reportWebVitals from "./reportWebVitals";
 import { LiveAPIProvider } from "./contexts/LiveAPIContext";
 import { SelectedToolsProvider } from "./contexts/SelectedToolsContext";
+import { DependenciesProvider } from "./contexts/DependenciesContext";
 
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
@@ -31,15 +32,14 @@ if (typeof API_KEY !== "string") {
   throw new Error("set REACT_APP_GEMINI_API_KEY in .env");
 }
 
-// const host = "generativelanguage.googleapis.com";
-// const uri = `wss://${host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`;
-
 root.render(
   <React.StrictMode>
     <SelectedToolsProvider>
-      <LiveAPIProvider options={{ apiKey: API_KEY }}>
-        <App />
-      </LiveAPIProvider>
+      <DependenciesProvider>
+        <LiveAPIProvider options={{ apiKey: API_KEY }}>
+          <App />
+        </LiveAPIProvider>
+      </DependenciesProvider>
     </SelectedToolsProvider>
   </React.StrictMode>
 );

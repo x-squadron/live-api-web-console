@@ -32,7 +32,7 @@
     "start-https": "HTTPS=true craco start",
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test",
+    "test": "npx vitest",
     "eject": "craco eject"
   },
   "eslintConfig": {
@@ -63,10 +63,15 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@vitest/coverage-istanbul": "^3.2.0",
+    "react-app-alias": "^2.2.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3",
+    "vite": "^6.3.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.0"
+    "vitest": "^3.2.0",
+    "vitest-canvas-mock": "^0.3.3",
+    "xhr2": "^0.2.1"
   },
   "overrides": {
     "typescript": "^5.6.3"

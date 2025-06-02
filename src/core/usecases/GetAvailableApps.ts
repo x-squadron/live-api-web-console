@@ -1,4 +1,4 @@
-import { Application } from "@core";
+import { Application, ApplicationsGateway } from "@core/domain";
 import { Usecase } from "./Usecase";
 
 type GetAvailableAppsInputPort = {};
@@ -13,10 +13,12 @@ export class GetAvailableApps
       Application[]
     >
 {
-  execute(
+  constructor(private readonly appsGateway: ApplicationsGateway) {}
+
+  async execute(
     inputs: GetAvailableAppsInputPort,
     outputs?: GetAvailableAppsOutputPort
   ): Promise<Application[]> {
-    throw new Error("Method not implemented.");
+    return await this.appsGateway.getAvailableApplications();
   }
 }

@@ -1,9 +1,10 @@
 //composioAppList.tsx
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { Composio, ComposioToolSet } from "composio-core";
+import { ComposioToolSet } from "composio-core";
 import "./composio-button.scss";
 import { connectToApp } from "./connectToApp";
 import { useSelectedToolsContext } from "../../contexts/SelectedToolsContext";
+import { useDependencies } from "../../contexts/DependenciesContext";
 
 type App = {
   name: string;
@@ -24,6 +25,8 @@ export const COMPOSIO_ENTITY_ID =
   process.env.REACT_APP_COMPOSIO_API_KEY ?? "default";
 
 export function ComposioAppList() {
+  const { getAvailableApps } = useDependencies();
+
   const [apps, setApps] = useState<App[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -68,9 +71,7 @@ export function ComposioAppList() {
     const uniqueCategories = new Set<string>();
     apps.forEach((app) => {
       if (app.categories && app.categories !== "Uncategorized") {
-        app.categories
-          .split(", ")
-          .forEach((cat) => uniqueCategories.add(cat.trim()));
+        app.categories.split(",").forEach((cat) => uniqueCategories.add(cat));
       }
     });
     return Array.from(uniqueCategories).sort();
@@ -254,24 +255,16 @@ export function ComposioAppList() {
   useEffect(() => {
     const fetchApps = async () => {
       try {
-        const composio = new Composio({
-          apiKey: process.env.REACT_APP_COMPOSIO_API_KEY!,
-        });
+        const result = await getAvailableApps.execute({});
 
-        const raw = await composio.apps.list();
-
-        const result = JSON.parse(JSON.stringify(raw));
+        // const result = JSON.parse(JSON.stringify(raw));
         console.log("[Composio Button] Cleaned App Result:", result);
 
-        const simplifiedApps: App[] = result
-          .filter((app: any) => app.auth_schemes?.[0]?.mode === "OAUTH2")
-          .map((app: any) => ({
-            name: app.displayName ?? "Unknown",
-            logo: app.logo ?? "",
-            categories: Array.isArray(app.categories)
-              ? app.categories.join(", ")
-              : (app.categories ?? "Uncategorized"),
-          }));
+        const simplifiedApps: App[] = result.map((app) => ({
+          name: app.name,
+          logo: app.logo,
+          categories: app.categories.join(","),
+        }));
 
         const sortedApps = simplifiedApps.sort((a, b) =>
           a.name.localeCompare(b.name)
@@ -288,7 +281,7 @@ export function ComposioAppList() {
     };
 
     fetchApps();
-  }, [fetchAllConnectionStatuses]);
+  }, [getAvailableApps, fetchAllConnectionStatuses]);
 
   // Filter apps based on search, category, and connection status
   const filteredApps = useMemo(() => {

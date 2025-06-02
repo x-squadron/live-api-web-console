@@ -20,6 +20,9 @@ type ComposioTool = {
   tags: string[];
 };
 
+export const COMPOSIO_ENTITY_ID =
+  process.env.REACT_APP_COMPOSIO_API_KEY ?? "default";
+
 export function ComposioAppList() {
   const [apps, setApps] = useState<App[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,7 +50,6 @@ export function ComposioAppList() {
   const {
     selectedTools,
     setSelectedTools,
-    toolDescriptions,
     setToolDescriptions,
     activationStatuses,
     setActivationStatuses,
@@ -82,7 +84,7 @@ export function ComposioAppList() {
 
       let entity;
       try {
-        entity = await toolset.getEntity("default");
+        entity = await toolset.getEntity(COMPOSIO_ENTITY_ID);
       } catch (err) {
         console.error("❌ Failed to get Composio entity:", err);
         apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
@@ -268,7 +270,7 @@ export function ComposioAppList() {
             logo: app.logo ?? "",
             categories: Array.isArray(app.categories)
               ? app.categories.join(", ")
-              : app.categories ?? "Uncategorized",
+              : (app.categories ?? "Uncategorized"),
           }));
 
         const sortedApps = simplifiedApps.sort((a, b) =>
@@ -322,10 +324,13 @@ export function ComposioAppList() {
     setProcessingApps((prev) => new Set(prev.add(appName)));
 
     try {
-      const success = await connectToApp(appName.toLowerCase());
+      const success = await connectToApp(
+        appName.toLowerCase(),
+        COMPOSIO_ENTITY_ID
+      );
 
       if (success) {
-        const entity = await toolset.getEntity("default");
+        const entity = await toolset.getEntity(COMPOSIO_ENTITY_ID);
         const connection = await entity.getConnection({
           app: appName.toLowerCase(),
         });

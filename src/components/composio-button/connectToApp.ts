@@ -27,20 +27,27 @@ export async function connectToApp(
     const connectionRequest = await toolset.connectedAccounts.initiate({
       appName,
       authMode: "OAUTH2",
+      entityId: userId,
     });
 
     if (!connectionRequest.redirectUrl) {
-      toast.show(`❌ No redirect URL received for ${appName}`, { timeout: 4000 });
+      toast.show(`❌ No redirect URL received for ${appName}`, {
+        timeout: 4000,
+      });
       return false;
     }
 
-    toast.show(`🔄 Redirecting to ${appName} authentication...`, { timeout: 2000 });
+    toast.show(`🔄 Redirecting to ${appName} authentication...`, {
+      timeout: 2000,
+    });
 
     // Open as regular tab (not a popup)
     const windowRef = window.open(connectionRequest.redirectUrl, "_blank");
 
     if (!windowRef) {
-      toast.show(`❌ Popup blocked. Please allow popups for this site.`, { timeout: 4000 });
+      toast.show(`❌ Popup blocked. Please allow popups for this site.`, {
+        timeout: 4000,
+      });
       return false;
     }
 
@@ -63,14 +70,18 @@ export async function connectToApp(
     });
 
     const result = await Promise.race([
-      connectionRequest.waitUntilActive(180).then((conn) => conn?.status === "ACTIVE"),
+      connectionRequest
+        .waitUntilActive(180)
+        .then((conn) => conn?.status === "ACTIVE"),
       waitForTabCloseOrTimeout,
     ]);
 
     if (!windowRef.closed) windowRef.close();
 
     toast.show(
-      result ? `✅ Connected to ${appName}` : `❌ Connection cancelled or failed`,
+      result
+        ? `✅ Connected to ${appName}`
+        : `❌ Connection cancelled or failed`,
       { timeout: 3000 }
     );
 

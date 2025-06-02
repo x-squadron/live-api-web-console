@@ -52,18 +52,45 @@ function AltairComponent() {
         .filter(Boolean)
         .map((tool) => tool.functionDeclarations ?? [])
         .flat();
+      // console.log("[App] configured tool names: ", tools);
 
       const uniqueTools = [
         ...new Map(
           [...tools, ...[declaration]].map((tool) => [tool.name, tool])
         ).values(),
       ];
+      // console.log("unique tools", uniqueTools);
 
-      console.log(`[AltairComponent] registering tool: ${declaration.name}`);
+      // @ts-ignore
+      const configuredInstructions = config.systemInstruction?.parts ?? [];
+      const componentInstructions: Part[] = [
+        {
+          text: 'You are my helpful assistant. Any time I ask you for a graph call the "render_altair" function I have provided you. Dont ask for additional information just make your best judgement.',
+        },
+      ];
+
+      const uniqueSystemInstructions = [
+        ...new Map(
+          [...configuredInstructions, ...componentInstructions].map((tool) => [
+            tool.text,
+            tool,
+          ])
+        ).values(),
+      ];
+
+      console.log(`[AltairComponent] init`, config.systemInstruction);
 
       return {
         ...config,
+        systemInstruction: {
+          parts: [...uniqueSystemInstructions],
+        },
         tools: [{ functionDeclarations: uniqueTools }],
+        // tools: [
+        //   // there is a free-tier quota for search
+        //   { googleSearch: {} },
+        //   { functionDeclarations: [declaration] },
+        // ],
       };
     });
   }, [setConfig, setModel]);

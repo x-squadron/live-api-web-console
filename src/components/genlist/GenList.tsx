@@ -200,14 +200,12 @@ function GenListComponent() {
         .filter(Boolean)
         .map((tool) => tool.functionDeclarations ?? [])
         .flat();
-      // console.log("[App] configured tool names: ", tools);
 
       const componentToolsDeclarations = toolObject
         .filter(isFunctionDeclarationsTool)
         .filter(Boolean)
         .map((tool) => tool.functionDeclarations ?? [])
         .flat();
-      // console.log("[App] component tool names: ", componentToolsDeclarations);
 
       const uniqueTools = [
         ...new Map(
@@ -217,27 +215,11 @@ function GenListComponent() {
           ])
         ).values(),
       ];
-      // console.log("unique tools", uniqueTools);
-      console.log(`[GenListComponent] init`, config.systemInstruction);
 
-      // @ts-ignore
-      const configuredInstructions = config.systemInstruction?.parts ?? [];
-      const componentInstructions: Part[] = systemInstructionObject.parts;
-
-      const uniqueSystemInstructions = [
-        ...new Map(
-          [...configuredInstructions, ...componentInstructions].map((tool) => [
-            tool.text,
-            tool,
-          ])
-        ).values(),
-      ];
+      console.log(`[GenListComponent] registering tools:`, componentToolsDeclarations.map(t => t.name));
 
       return {
         ...config,
-        systemInstruction: {
-          parts: [...uniqueSystemInstructions],
-        },
         tools: [{ functionDeclarations: uniqueTools }],
       };
     });

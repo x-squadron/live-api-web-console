@@ -3,17 +3,19 @@ import { ComposioApplicationMapper } from "@core/adapters";
 import { Composio } from "composio-core";
 
 export class ComposioApplicationsGateway implements ApplicationsGateway {
+  composio = new Composio({
+    apiKey: process.env.REACT_APP_COMPOSIO_API_KEY,
+  });
+
   constructor(private readonly appsMapper: ComposioApplicationMapper) {}
+
   getAvailableApplications = async () => {
     console.log(
       "process.env.REACT_APP_COMPOSIO_API_KEY:",
       process.env.REACT_APP_COMPOSIO_API_KEY
     );
-    const composio = new Composio({
-      apiKey: process.env.REACT_APP_COMPOSIO_API_KEY,
-    });
 
-    const raw = await composio.apps.list();
+    const raw = await this.composio.apps.list();
     return (
       raw
         // @ts-ignore

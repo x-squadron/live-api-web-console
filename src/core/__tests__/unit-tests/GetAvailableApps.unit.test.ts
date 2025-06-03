@@ -7,8 +7,8 @@ describe("GetAvailableApps", () => {
 
   it("Should be able to list available apps", async () => {
     const apps: Application[] = [
-      new Application("GMAIL"),
-      new Application("LINEAR"),
+      new Application("GMAIL", "LOGO"),
+      new Application("LINEAR", "LOGO"),
     ];
     givenExistingApps(apps);
     const result = await sut.execute({});

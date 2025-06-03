@@ -1,59 +1,44 @@
 //composioAppList.tsx
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { ComposioToolSet } from "composio-core";
 import "./composio-button.scss";
 import { connectToApp } from "./connectToApp";
 import { useSelectedToolsContext } from "../../contexts/SelectedToolsContext";
-import { useDependencies } from "../../contexts/DependenciesContext";
-
-type App = {
-  name: string;
-  logo: string;
-  categories: string;
-};
-
-type ConnectionStatus = "ACTIVE" | "INACTIVE" | "UNKNOWN";
-
-type ComposioTool = {
-  name: string;
-  description: string;
-  appName: string;
-  tags: string[];
-};
+import { useAppListViewModels } from "./viewmodels/useAppListViewModels";
 
 export const COMPOSIO_ENTITY_ID =
   process.env.REACT_APP_COMPOSIO_API_KEY ?? "default";
 
 export function ComposioAppList() {
-  const { getAvailableApps } = useDependencies();
+  const {
+    apps,
+    categories,
+    fetchToolsForApp,
+    loading,
+    loadingTools,
+    connectionStatuses,
+    setConnectionStatuses,
+    toolsByApp,
+    setToolsByApp,
+    connectionIds,
+    setConnectionIds,
+    processingApps,
+    setProcessingApps,
+  } = useAppListViewModels(COMPOSIO_ENTITY_ID);
 
-  const [apps, setApps] = useState<App[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [connectionFilter, setConnectionFilter] = useState<
     "all" | "connected" | "not-connected"
   >("all");
-  const [connectionStatuses, setConnectionStatuses] = useState<
-    Map<string, ConnectionStatus>
-  >(new Map());
-  const [connectionIds, setConnectionIds] = useState<Map<string, string>>(
-    new Map()
-  );
-  const [processingApps, setProcessingApps] = useState<Set<string>>(new Set());
 
   // New state for collapsible tool sections
   const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
-  const [toolsByApp, setToolsByApp] = useState<Map<string, ComposioTool[]>>(
-    new Map()
-  );
-  const [loadingTools, setLoadingTools] = useState<Set<string>>(new Set());
 
   // Use global context for selected tools and activation statuses
   const {
     selectedTools,
     setSelectedTools,
-    setToolDescriptions,
     activationStatuses,
     setActivationStatuses,
   } = useSelectedToolsContext();
@@ -64,119 +49,6 @@ export function ComposioAppList() {
         apiKey: process.env.REACT_APP_COMPOSIO_API_KEY!,
       }),
     []
-  );
-
-  // Get unique categories from apps
-  const categories = useMemo(() => {
-    const uniqueCategories = new Set<string>();
-    apps.forEach((app) => {
-      if (app.categories && app.categories !== "Uncategorized") {
-        app.categories.split(",").forEach((cat) => uniqueCategories.add(cat));
-      }
-    });
-    return Array.from(uniqueCategories).sort();
-  }, [apps]);
-
-  // Check connection status for all apps using entity.getConnection
-  const fetchAllConnectionStatuses = useCallback(
-    async (apps: App[]) => {
-      const statusMap = new Map<string, ConnectionStatus>();
-      const idMap = new Map<string, string>();
-
-      let entity;
-      try {
-        entity = await toolset.getEntity(COMPOSIO_ENTITY_ID);
-      } catch (err) {
-        console.error("❌ Failed to get Composio entity:", err);
-        apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
-        setConnectionStatuses(statusMap);
-        return;
-      }
-
-      try {
-        const allConnections = await entity.getConnections();
-
-        // Build a lookup table for connected apps
-        const connectedAppMap = new Map<string, string>(); // appName -> connectionId
-
-        for (const conn of allConnections) {
-          if (conn.status === "ACTIVE" && conn.appName && conn.id) {
-            connectedAppMap.set(conn.appName.toLowerCase(), conn.id);
-          }
-        }
-
-        // Match apps with connections
-        apps.forEach((app) => {
-          const appKey = app.name.toLowerCase();
-          if (connectedAppMap.has(appKey)) {
-            statusMap.set(app.name, "ACTIVE");
-            idMap.set(app.name, connectedAppMap.get(appKey)!);
-          } else {
-            statusMap.set(app.name, "INACTIVE");
-          }
-        });
-      } catch (err) {
-        console.error("❌ Error fetching connections:", err);
-        apps.forEach((app) => statusMap.set(app.name, "UNKNOWN"));
-      }
-
-      setConnectionStatuses(statusMap);
-      setConnectionIds(idMap);
-    },
-    [toolset]
-  );
-
-  // Fetch tools for a specific app
-  const fetchToolsForApp = useCallback(
-    async (appName: string) => {
-      if (toolsByApp.has(appName) || loadingTools.has(appName)) {
-        return;
-      }
-
-      setLoadingTools((prev) => new Set(prev.add(appName)));
-
-      try {
-        const actions = await toolset.actions.list({
-          apps: appName.toLowerCase(),
-        });
-
-        const tools: ComposioTool[] = (actions.items || []).map(
-          (action: any) => ({
-            name: action.name || "Unknown Action",
-            description: action.description || "No description available",
-            appName: appName,
-            tags: action.tags || [],
-          })
-        );
-
-        setToolsByApp((prev) => new Map(prev.set(appName, tools)));
-
-        // Store tool descriptions in global context
-        setToolDescriptions((prev) => {
-          const newMap = new Map(prev);
-          tools.forEach((tool) => {
-            newMap.set(tool.name, {
-              name: tool.name,
-              description: tool.description,
-              appName: tool.appName,
-            });
-          });
-          return newMap;
-        });
-
-        console.log(`✅ Fetched ${tools.length} tools for ${appName}`);
-      } catch (error) {
-        console.error(`❌ Failed to fetch tools for ${appName}:`, error);
-        setToolsByApp((prev) => new Map(prev.set(appName, [])));
-      } finally {
-        setLoadingTools((prev) => {
-          const newSet = new Set(prev);
-          newSet.delete(appName);
-          return newSet;
-        });
-      }
-    },
-    [toolset, toolsByApp, loadingTools, setToolDescriptions]
   );
 
   // Toggle app expansion
@@ -252,37 +124,6 @@ export function ComposioAppList() {
     [setActivationStatuses, setExpandedApps]
   );
 
-  useEffect(() => {
-    const fetchApps = async () => {
-      try {
-        const result = await getAvailableApps.execute({});
-
-        // const result = JSON.parse(JSON.stringify(raw));
-        console.log("[Composio Button] Cleaned App Result:", result);
-
-        const simplifiedApps: App[] = result.map((app) => ({
-          name: app.name,
-          logo: app.logo,
-          categories: app.categories.join(","),
-        }));
-
-        const sortedApps = simplifiedApps.sort((a, b) =>
-          a.name.localeCompare(b.name)
-        );
-        setApps(sortedApps);
-
-        if (sortedApps.length) await fetchAllConnectionStatuses(sortedApps);
-        console.log("[Composio Button] Apps set in state:", sortedApps);
-      } catch (error) {
-        console.error("❌ Error fetching Composio apps:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchApps();
-  }, [getAvailableApps, fetchAllConnectionStatuses]);
-
   // Filter apps based on search, category, and connection status
   const filteredApps = useMemo(() => {
     return apps.filter((app) => {
@@ -290,8 +131,7 @@ export function ComposioAppList() {
         .toLowerCase()
         .includes(searchTerm.toLowerCase());
       const matchesCategory =
-        selectedCategory === "all" ||
-        app.categories.toLowerCase().includes(selectedCategory.toLowerCase());
+        selectedCategory === "all" || app.categories.includes(selectedCategory);
 
       const appConnectionStatus = connectionStatuses.get(app.name);
       const matchesConnection =

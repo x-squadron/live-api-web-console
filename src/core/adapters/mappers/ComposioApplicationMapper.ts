@@ -10,7 +10,7 @@ export class ComposioApplicationMapper
       raw.logo,
       (Array.isArray(raw.categories)
         ? raw.categories.join(", ")
-        : (raw.categories ?? "Uncategorized")
+        : raw.categories ?? "Uncategorized"
       )
         .split(",")
         .map((category) => category.trim())

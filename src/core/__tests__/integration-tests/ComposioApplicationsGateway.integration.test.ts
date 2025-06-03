@@ -3,9 +3,6 @@ import {
   ComposioApplicationsGateway,
 } from "@core/adapters";
 
-// needed for jsdom request to work in test node environment
-global.XMLHttpRequest = require("xhr2");
-
 describe("ComposioApplicationsGateway", () => {
   let sut: ComposioApplicationsGateway;
 

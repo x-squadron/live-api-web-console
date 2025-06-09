@@ -17,7 +17,7 @@ describe("ComposioToolsGateway", () => {
           appName: appName,
         }),
         expect.objectContaining({
-          name: "GOOGLECALENDAR_DELETE_EVENT",
+          name: "GOOGLECALENDAR_UPDATE_EVENT",
           appName: appName,
         }),
       ])

@@ -62,6 +62,10 @@ export const useAppListViewModels = (userId: string) => {
           a.name.localeCompare(b.name)
         );
         setApps(sortedApps);
+        console.log(
+          "sorted ComposioApps :",
+          sortedApps.map((app) => app.name)
+        );
 
         if (sortedApps.length) await fetchAllConnectionStatuses();
       } catch (error) {

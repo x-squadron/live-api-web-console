@@ -23,13 +23,17 @@ export default function SettingsDialog() {
     if (!Array.isArray(config.tools)) {
       return [];
     }
-    return (config.tools as Tool[])
+    const tools = (config.tools as Tool[])
       .filter((t: Tool): t is FunctionDeclarationsTool =>
         Array.isArray((t as any).functionDeclarations)
       )
       .map((t) => t.functionDeclarations)
       .filter((fc) => !!fc)
       .flat();
+
+    console.log("[SettingsDialog] functionDeclarations: ", tools);
+
+    return tools;
   }, [config]);
 
   // system instructions can come in many types

@@ -6,5 +6,5 @@ export * from "./gateways/ApplicationsConnectionsGateway";
 export * from "./gateways/ToolsGateway";
 export * from "./mappers/Mapper";
 export * from "./entities/TaskItem";
-export * from "./gateways/TaskGateway";
+export * from "./gateways/TasksGateway";
 export * from "./entities/TimeInterval";

@@ -19,7 +19,7 @@ export class ComposioApplicationsGateway implements ApplicationsGateway {
     return (
       raw
         // @ts-ignore
-        .filter((app) => app.auth_schemes?.[0]?.mode === "OAUTH2")
+        .filter((app) => app.auth_schemes?.includes("OAUTH2"))
         .map((app) => this.appsMapper.toDomain(app))
     );
   };

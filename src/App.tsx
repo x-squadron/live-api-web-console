@@ -39,6 +39,9 @@ import {
 import { Alert } from "./components/alerts/Alert";
 import { ToastContainer, toast } from "react-tiny-toast";
 import { COMPOSIO_ENTITY_ID } from "./components/composio-button/composioAppList";
+import { useDependencies } from "@context";
+import { ToolMapper } from "./mappers/ToolMapper";
+import { GenerateTaskListForInterval } from "@core";
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture
@@ -54,6 +57,8 @@ function App() {
     selectedTools,
     activationStatuses,
   } = useSelectedToolsContext();
+
+  const usecases = useDependencies();
 
   // Initialize composio toolset and model (runs once)
   useEffect(() => {
@@ -100,7 +105,8 @@ function App() {
           .filter(isFunctionDeclarationsTool)
           .filter(Boolean)
           .map((tool) => tool.functionDeclarations ?? [])
-          .flat();
+          .flat()
+          .filter((t) => t.name == t.name?.toLowerCase()); // filter out composio tools which are UPPERCASE
 
         console.log(
           "[App] existing tool names: ",
@@ -119,8 +125,24 @@ function App() {
           composioToolDeclarations.map((t) => t.name)
         );
 
+        // Get existing tools from config
+        const usecaseTools = [
+          ...(Object.entries([usecases.generateTaskListForInterval]) ?? []),
+        ]
+          .map(([key, value]) => ToolMapper.fromUsecase(value))
+          .flat();
+
+        console.log(
+          "[App] usecase tool names: ",
+          usecaseTools.map((t) => t.name)
+        );
+
         // // Combine built-in tools with currently selected composio tools
-        const allTools = [...existingTools, ...composioToolDeclarations];
+        const allTools = [
+          ...existingTools,
+          ...composioToolDeclarations,
+          ...usecaseTools,
+        ];
 
         // Remove duplicates by name
         const uniqueTools = [
@@ -141,8 +163,8 @@ function App() {
         ];
 
         const toolsList =
-          allToolsWithDescriptions.length > 0
-            ? allToolsWithDescriptions
+          uniqueTools.length > 0
+            ? uniqueTools
                 .map((tool) => `• "${tool.name}": ${tool.description}`)
                 .join("\n                       ")
             : "";

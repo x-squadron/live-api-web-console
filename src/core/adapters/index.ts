@@ -7,3 +7,4 @@ export * from "./gateways/ComposioToolsGateway";
 export * from "./mappers/ComposioToolMapper";
 export * from "./in-memory/gateways/InMemoryToolsGateway";
 export * from "./in-memory/gateways/InMemoryApplicationsConnectionsGateway";
+export * from "./in-memory/gateways/InMemoryTaskListGateway";

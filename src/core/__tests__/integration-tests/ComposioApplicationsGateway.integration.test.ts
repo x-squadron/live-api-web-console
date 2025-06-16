@@ -13,15 +13,15 @@ describe("ComposioApplicationsGateway", () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: "gmail",
-          categories: ["Collaboration & Communication"],
+          categories: ["collaboration & communication"],
         }),
         expect.objectContaining({ name: "slack" }),
         expect.objectContaining({ name: "linear" }),
         expect.objectContaining({
           name: "airtable",
           categories: [
-            "Productivity & Project Management",
-            "Workflow Automation",
+            "productivity & project management",
+            "workflow automation",
           ],
         }),
       ])

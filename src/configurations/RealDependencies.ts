@@ -2,6 +2,7 @@ import {
   GetApplicationTools,
   GetAvailableApps,
   CheckConnectionStatus,
+  GenerateTaskListForInterval,
 } from "@core";
 import { Dependencies } from "./Dependencies";
 import {
@@ -11,6 +12,7 @@ import {
   ComposioToolsGateway,
   ComposioConnectionMapper,
   ComposioApplicationsConnectionGateway,
+  InMemoryTaskListGateway,
 } from "@core/adapters";
 
 export const setupRealDependencies = (): Dependencies => {
@@ -33,6 +35,9 @@ export const setupRealDependencies = (): Dependencies => {
     getApplicationTools: new GetApplicationTools(composioToolsGateway),
     checkConnectionStatus: new CheckConnectionStatus(
       applicationsConnectionGateway
+    ),
+    generateTaskListForInterval: new GenerateTaskListForInterval(
+      new InMemoryTaskListGateway()
     ),
   };
 };

@@ -15,10 +15,23 @@ function removeExamples(obj: any): any {
   }
 
   const cleaned: any = {};
-  for (const [key, value] of Object.entries(obj)) {
+  for (let [key, value] of Object.entries(obj)) {
     if (key === "examples") {
       // Skip the examples field entirely
       continue;
+    }
+    if (["attendees"].includes(key)) {
+      // Skip the examples field entirely
+      // we do this to avoid
+      // server.closedisconnected with reason: *
+      // BidiGenerateContentRequest.setup.tools[0].function_declarations[5].parameters.properties[attendees].
+      // items: missing field.
+      continue;
+    }
+    if (key === "exclusiveMinimum") {
+      obj["minimum"] = obj[key];
+      delete obj[key];
+      return obj;
     }
     cleaned[key] = removeExamples(value);
   }
@@ -40,7 +53,7 @@ export async function getDefaultTools(
       functionDeclarations: composioTools
         // .slice(1, 2)
         .map((tool: ChatCompletionTool) => {
-          // console.log("[getDefaultTools] composio tool: ", tool);
+          console.log("[getDefaultTools] composio tool: ", tool);
 
           // Clean the entire tool function parameters to remove all examples
           const cleanedParameters = removeExamples(

@@ -12,7 +12,7 @@ import {
   ComposioToolsGateway,
   ComposioConnectionMapper,
   ComposioApplicationsConnectionGateway,
-  InMemoryTaskListGateway,
+  ComposioTaskListGateway,
 } from "@core/adapters";
 
 export const setupRealDependencies = (): Dependencies => {
@@ -30,6 +30,10 @@ export const setupRealDependencies = (): Dependencies => {
       applicationsGateway
     );
 
+  const composioTaskListGateway = new ComposioTaskListGateway(
+    process.env.REACT_APP_COMPOSIO_API_KEY ?? ""
+  );
+
   return {
     getAvailableApps: new GetAvailableApps(applicationsGateway),
     getApplicationTools: new GetApplicationTools(composioToolsGateway),
@@ -37,7 +41,7 @@ export const setupRealDependencies = (): Dependencies => {
       applicationsConnectionGateway
     ),
     generateTaskListForInterval: new GenerateTaskListForInterval(
-      new InMemoryTaskListGateway()
+      composioTaskListGateway
     ),
   };
 };

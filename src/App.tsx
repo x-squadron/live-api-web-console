@@ -42,6 +42,7 @@ import { COMPOSIO_ENTITY_ID } from "./components/composio-button/composioAppList
 import { useDependencies } from "@context";
 import { ToolMapper } from "./mappers/ToolMapper";
 import { GenerateTaskListForInterval } from "@core";
+import { TimeInterval } from "@core/domain";
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture
@@ -320,6 +321,35 @@ User: "Yes, go ahead"
                 error: error instanceof Error ? error.message : String(error),
               };
             }
+          } else if (fCall.name === "GENERATETASKLISTFORINTERVAL") {
+            const args = fCall.args as {
+              interval?: { start: string; end: string; label?: string };
+            };
+            if (!args.interval?.start || !args.interval?.end) {
+              throw new Error(
+                "Missing required interval.start and interval.end"
+              );
+            }
+
+            const interval = new TimeInterval(
+              new Date(args.interval.start),
+              new Date(args.interval.end),
+              args.interval.label
+            );
+
+            const tasks = await usecases.generateTaskListForInterval.execute({
+              interval,
+            });
+
+            functionResponse.response!.data = tasks.map((task) => ({
+              id: task.id,
+              title: task.title,
+              description: task.description,
+              status: task.status,
+              dueDate: task.dueDate?.toISOString(),
+              priority: task.priority,
+              source: task.source,
+            }));
           } else {
             // Tool not selected - check if it's a built-in tool (GenList, Altair, etc.)
             // Let other components handle their own tools

@@ -141,7 +141,7 @@ function AltairComponent() {
   return (
     <>
       <div className="vega-embed" ref={embedRef} />
-      {jsonString && "Hello Youssef"}
+      {jsonString && "Hello"}
     </>
   );
 }

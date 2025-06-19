@@ -27,7 +27,7 @@ describe("ComposioTaskListGateway (Integration)", () => {
 
     result.forEach((task) => {
       expect(task).toHaveProperty("id");
-      expect(task).toHaveProperty("titles");
+      expect(task).toHaveProperty("title");
       expect(task).toHaveProperty("description");
       expect(task).toHaveProperty("status");
       expect(task).toHaveProperty("priority");

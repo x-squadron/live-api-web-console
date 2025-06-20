@@ -57,18 +57,18 @@ export async function getDefaultTools(
 ): Promise<Tool[]> {
   const isA2AEnabled = process.env.REACT_APP_A2A_ENABLED === 'true';
   
-  // TEMPORARY FIX: Always show both A2A and Composio tools until A2A is fully working
-  console.log("[getDefaultTools] TEMP FIX: Loading both A2A delegation tools AND direct Composio tools");
+  // Always load A2A delegation tools when enabled, regardless of selected Composio actions
+  console.log("[getDefaultTools] Loading A2A delegation tools and Composio tools");
   console.log(`[getDefaultTools] A2A enabled: ${isA2AEnabled}, Actions available: ${actions.length}`);
   
   const tools: Tool[] = [];
   
-  // Add A2A delegation tools if enabled
+  // Add A2A delegation tools if enabled (always load these for agent discovery)
   if (isA2AEnabled) {
     try {
       const a2aTools = await createDynamicA2ATools();
       tools.push(...a2aTools);
-      console.log(`[getDefaultTools] Added ${a2aTools.length} A2A delegation tools`);
+      console.log(`[getDefaultTools] Added ${a2aTools.length} A2A delegation tools (discover_agents, delegate_to_agent)`);
     } catch (error) {
       console.error("[getDefaultTools] Failed to create A2A tools:", error);
     }

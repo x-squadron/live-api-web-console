@@ -41,6 +41,7 @@ const DEFAULT_COMPOSIO_ENTITY_ID = process.env.COMPOSIO_ENTITY_ID || 'default_us
 class ReactAgentManager {
   constructor() {
     this.agents = new Map();
+    this.standaloneAgents = new Map(); // Add support for standalone agents
     this.portRange = { min: 4000, max: 4999 };
     this.usedPorts = new Set();
     
@@ -527,20 +528,56 @@ Remember: You are autonomous and should execute tools directly to complete ${app
     }
   }
 
+  // Register a standalone agent
+  registerStandaloneAgent(agentConfig) {
+    const agentInfo = {
+      id: agentConfig.id,
+      name: agentConfig.name,
+      description: agentConfig.description,
+      url: agentConfig.url,
+      appName: agentConfig.appName || 'Standalone',
+      actions: agentConfig.tools || [],
+      status: 'active',
+      type: 'standalone',
+      created: new Date(),
+      lastUsed: new Date()
+    };
+    
+    this.standaloneAgents.set(agentConfig.id, agentInfo);
+    console.log(`✅ Registered standalone agent: ${agentConfig.name}`);
+    return agentInfo;
+  }
+
   listAgents(appNameFilter = null) {
-    const agents = Array.from(this.agents.values());
+    // Get dynamic agents
+    const dynamicAgents = Array.from(this.agents.values()).map(agent => ({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      url: agent.url,
+      appName: agent.appName,
+      actions: agent.actions,
+      status: 'active',
+      type: 'dynamic',
+      created: agent.created
+    }));
+
+    // Get standalone agents
+    const standaloneAgents = Array.from(this.standaloneAgents.values());
+    
+    const allAgents = [...dynamicAgents, ...standaloneAgents];
     
     if (appNameFilter) {
-      return agents.filter(agent => 
+      return allAgents.filter(agent => 
         agent.appName.toLowerCase().includes(appNameFilter.toLowerCase())
       );
     }
     
-    return agents;
+    return allAgents;
   }
 
   getAgent(agentId) {
-    return this.agents.get(agentId);
+    return this.agents.get(agentId) || this.standaloneAgents.get(agentId);
   }
 }
 
@@ -556,6 +593,25 @@ function arraysEqual(a, b) {
 console.log('🔄 Initializing ReactAgentManager...');
 const agentManager = new ReactAgentManager();
 console.log('✅ ReactAgentManager initialized');
+
+// Register some test standalone agents
+agentManager.registerStandaloneAgent({
+  id: 'test-agent',
+  name: 'Test Agent',
+  description: 'A simple test agent for demonstration',
+  url: 'http://localhost:9999',
+  appName: 'Test App',
+  tools: ['say_hello', 'get_time', 'echo_message']
+});
+
+agentManager.registerStandaloneAgent({
+  id: 'weather-agent',
+  name: 'Weather Agent',
+  description: 'Provides weather information',
+  url: 'http://localhost:9998',
+  appName: 'Weather Service',
+  tools: ['get_weather', 'get_forecast']
+});
 
 // API Routes
 console.log('🔄 Setting up API routes...');
@@ -639,6 +695,35 @@ app.post('/api/agents', async (req, res) => {
   }
 });
 
+// Register standalone agent
+app.post('/api/agents/register', (req, res) => {
+  try {
+    const { id, name, description, url, appName, tools } = req.body;
+    
+    if (!id || !name || !url) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'id, name, and url are required' 
+      });
+    }
+
+    const agentInfo = agentManager.registerStandaloneAgent({
+      id, name, description, url, appName, tools
+    });
+
+    res.json({ 
+      success: true, 
+      agent: agentInfo 
+    });
+  } catch (error) {
+    console.error('Error registering standalone agent:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 // List agents
 app.get('/api/agents', (req, res) => {
   try {
@@ -696,6 +781,17 @@ app.post('/api/agents/:agentId/delegate', async (req, res) => {
     const agent = agentManager.getAgent(agentId);
     if (!agent) {
       return res.status(404).json({ error: `Agent ${agentId} not found` });
+    }
+
+    // Handle standalone agents differently - they just return a mock response
+    if (agent.type === 'standalone') {
+      console.log(`[API] Delegating task to standalone agent ${agentId}:`, message);
+      const mockResponse = `Hello! I'm ${agent.name}. I received your message: "${message}". This is a mock response since I'm a standalone agent. Available tools: ${agent.actions.join(', ')}`;
+      
+      return res.json({
+        success: true,
+        response: mockResponse
+      });
     }
 
     console.log(`[API] Delegating task to React agent ${agentId}:`, message);

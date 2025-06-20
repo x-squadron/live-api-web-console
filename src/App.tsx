@@ -88,14 +88,13 @@ function App() {
         selectedToolNames
       );
 
-      // Only load tools that are actually selected from the UI
+      // Always load A2A tools (discover_agents, delegate_to_agent) even if no Composio tools selected
+      // This ensures agent discovery is always available
       let composioTools: Tool[] = [];
-      if (selectedToolNames.length > 0) {
-        composioTools = await getDefaultTools(
-          composioToolset,
-          selectedToolNames
-        );
-      }
+      composioTools = await getDefaultTools(
+        composioToolset,
+        selectedToolNames
+      );
 
       setConfig((config: LiveConnectConfig) => {
         // Get existing tools from config

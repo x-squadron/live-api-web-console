@@ -14,6 +14,7 @@ import { MemorySaver } from '@langchain/langgraph';
 import { OpenAIToolSet } from 'composio-core';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
+import { createLinearAgent } from './LinearMeetingAgent.js';
 
 console.log('🔄 Starting A2A Backend Server with LangChain React Agents...');
 
@@ -613,6 +614,30 @@ agentManager.registerStandaloneAgent({
   tools: ['get_weather', 'get_forecast']
 });
 
+// Initialize and register the Linear Meeting Agent
+console.log('🔄 Registering Linear Meeting Agent...');
+try {
+  // Create and initialize the Linear agent
+  const linearAgent = createLinearAgent();
+  await linearAgent.initialize();
+  
+  // Register the Linear agent with the agent manager
+  agentManager.registerStandaloneAgent({
+    id: 'linear-meeting-agent',
+    name: 'Linear Meeting Agent',
+    description: 'Manages Linear issues based on meeting transcripts',
+    url: 'internal', // This agent runs internally, not as a separate server
+    appName: 'Linear Meeting Manager',
+    tools: ['process_meeting_transcript', 'list_linear_issues', 'create_linear_issue', 'update_linear_issue'],
+    agent: linearAgent // Pass the actual agent instance
+  });
+  
+  console.log('✅ Linear Meeting Agent registered successfully');
+} catch (error) {
+  console.error('❌ Failed to register Linear Meeting Agent:', error);
+  console.error('Make sure OPENAI_API_KEY and COMPOSIO_API_KEY are set in environment');
+}
+
 // API Routes
 console.log('🔄 Setting up API routes...');
 
@@ -841,6 +866,97 @@ app.post('/api/agents/:agentId/delegate', async (req, res) => {
 
   } catch (error) {
     console.error('[API] Error delegating to agent:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Linear Meeting Agent specific endpoints
+app.post('/api/linear/process-transcript', async (req, res) => {
+  try {
+    const { transcript } = req.body;
+    
+    if (!transcript) {
+      return res.status(400).json({ error: 'Transcript is required' });
+    }
+
+    const linearAgent = agentManager.getAgent('linear-meeting-agent');
+    if (!linearAgent?.agent) {
+      return res.status(404).json({ error: 'Linear Meeting Agent not available' });
+    }
+
+    console.log(`[Linear API] Processing meeting transcript...`);
+    const result = await linearAgent.agent.processTranscript(transcript);
+    
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Linear API] Error processing transcript:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+app.get('/api/linear/issues', async (req, res) => {
+  try {
+    const linearAgent = agentManager.getAgent('linear-meeting-agent');
+    if (!linearAgent?.agent) {
+      return res.status(404).json({ error: 'Linear Meeting Agent not available' });
+    }
+
+    const result = await linearAgent.agent.listIssues();
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Linear API] Error listing issues:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+app.get('/api/linear/teams', async (req, res) => {
+  try {
+    const linearAgent = agentManager.getAgent('linear-meeting-agent');
+    if (!linearAgent?.agent) {
+      return res.status(404).json({ error: 'Linear Meeting Agent not available' });
+    }
+
+    const result = await linearAgent.agent.listTeams();
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Linear API] Error listing teams:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+app.post('/api/linear/issues', async (req, res) => {
+  try {
+    const { title, description, priority, teamId } = req.body;
+    
+    if (!title || !description) {
+      return res.status(400).json({ error: 'Title and description are required' });
+    }
+
+    const linearAgent = agentManager.getAgent('linear-meeting-agent');
+    if (!linearAgent?.agent) {
+      return res.status(404).json({ error: 'Linear Meeting Agent not available' });
+    }
+
+    const result = await linearAgent.agent.createIssue(title, description, priority, teamId);
+    res.json(result);
+
+  } catch (error) {
+    console.error('[Linear API] Error creating issue:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 

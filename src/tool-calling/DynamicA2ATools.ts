@@ -23,7 +23,7 @@ export async function createDynamicA2ATools(): Promise<Tool[]> {
         },
         {
           name: "delegate_to_agent",
-          description: "Delegate a task to a specific specialized agent. Use this when you find an appropriate agent through discover_agents that can handle the user's request.",
+          description: "Delegate a task to a specific specialized agent. Use this when you find an appropriate agent through discover_agents that can handle the user's request. The message parameter can contain multiline text, newlines, and special characters - they will be handled properly.",
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -33,7 +33,7 @@ export async function createDynamicA2ATools(): Promise<Tool[]> {
               },
               message: {
                 type: Type.STRING,
-                description: "The task or message to send to the specialized agent"
+                description: "The task or message to send to the specialized agent. Can contain multiline text, newlines, and special characters. All text formatting will be preserved and passed correctly to the target agent."
               }
             },
             required: ["agentId", "message"]
@@ -82,10 +82,13 @@ async function handleDelegateToAgentReal(
   agentManager: RealAgentManager
 ): Promise<DelegateTaskResponse> {
   try {
-    console.log(`[DynamicA2ATools] Delegating to agent ${args.agentId} via real backend:`, args.message);
+    // Ensure message is properly formatted and handle any string encoding issues
+    const sanitizedMessage = typeof args.message === 'string' ? args.message : String(args.message);
+    
+    console.log(`[DynamicA2ATools] Delegating to agent ${args.agentId} via real backend:`, sanitizedMessage);
     const result = await agentManager.delegateTask({
       agentId: args.agentId,
-      message: args.message
+      message: sanitizedMessage
     });
     console.log(`[DynamicA2ATools] Agent ${args.agentId} response:`, result.response);
     return result;

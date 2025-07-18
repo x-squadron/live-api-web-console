@@ -58,6 +58,9 @@ module.exports = {
       return updatedConfig;
     },
   },
+  devServer: {
+    allowedHosts: "all"
+  },
   //     configure: (webpackConfig, { env, paths }) => {
   //       // eslint-disable-next-line no-param-reassign
   //       webpackConfig.resolve.fallback = {

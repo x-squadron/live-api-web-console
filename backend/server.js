@@ -14,7 +14,8 @@ import { MemorySaver } from '@langchain/langgraph';
 import { OpenAIToolSet } from 'composio-core';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { createLinearAgent } from './LinearMeetingAgent.js';
+import { createLinearAgent, runLinearMeetingAgent } from './LinearMeetingAgent.js';
+import { SwarmManager, MeetingSummarizer } from './swarm/index.js';
 
 console.log('🔄 Starting A2A Backend Server with LangChain React Agents...');
 
@@ -32,7 +33,8 @@ console.log(`✅ Express app created, will use port ${PORT}`);
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 console.log('✅ Middleware configured');
 
 // Default Composio Entity ID for tool execution (can be overridden per request)
@@ -270,7 +272,6 @@ Remember: You are autonomous and should execute tools directly to complete ${app
 
           // Create A2A client to communicate with the target agent
           const client = new A2AClient(targetAgent.url);
-          
           // A2A SDK expects parts to have 'kind' property with 'text' content
           const userMessage = {
             role: 'user',
@@ -541,7 +542,9 @@ Remember: You are autonomous and should execute tools directly to complete ${app
       status: 'active',
       type: 'standalone',
       created: new Date(),
-      lastUsed: new Date()
+      lastUsed: new Date(),
+      agent: agentConfig.agent, // Store the actual agent instance
+      discoverable: true // Default discoverable
     };
     
     this.standaloneAgents.set(agentConfig.id, agentInfo);
@@ -560,7 +563,8 @@ Remember: You are autonomous and should execute tools directly to complete ${app
       actions: agent.actions,
       status: 'active',
       type: 'dynamic',
-      created: agent.created
+      created: agent.created,
+      discoverable: agent.discoverable !== false
     }));
 
     // Get standalone agents
@@ -625,10 +629,10 @@ try {
   agentManager.registerStandaloneAgent({
     id: 'linear-meeting-agent',
     name: 'Linear Meeting Agent',
-    description: 'Manages Linear issues based on meeting transcripts',
+    description: 'Manages Linear issues based on meeting transcripts, creates subtasks, and adds comments',
     url: 'internal', // This agent runs internally, not as a separate server
     appName: 'Linear Meeting Manager',
-    tools: ['process_meeting_transcript', 'list_linear_issues', 'create_linear_issue', 'update_linear_issue'],
+    tools: ['LINEAR_LIST_LINEAR_ISSUES', 'LINEAR_LIST_LINEAR_PROJECTS', 'LINEAR_CREATE_LINEAR_ISSUE', 'LINEAR_UPDATE_ISSUE', 'LINEAR_DELETE_LINEAR_ISSUE', 'LINEAR_LIST_LINEAR_TEAMS', 'LINEAR_LIST_LINEAR_STATES', 'LINEAR_CREATE_LINEAR_COMMENT'],
     agent: linearAgent // Pass the actual agent instance
   });
   
@@ -636,6 +640,78 @@ try {
 } catch (error) {
   console.error('❌ Failed to register Linear Meeting Agent:', error);
   console.error('Make sure OPENAI_API_KEY and COMPOSIO_API_KEY are set in environment');
+}
+
+// Helper function to format transcript object for the Linear agent
+function formatTranscriptForAgent(transcript) {
+  const { id, platform, native_meeting_id, constructed_meeting_url, status, start_time, end_time, segments } = transcript;
+  
+  // Create meeting metadata section
+  const metadata = [
+    `MEETING METADATA:`,
+    `- Meeting ID: ${id}`,
+    `- Platform: ${platform}`,
+    `- Native Meeting ID: ${native_meeting_id}`,
+    `- Meeting URL: ${constructed_meeting_url}`,
+    `- Status: ${status}`,
+    `- Start Time: ${start_time}`,
+    `- End Time: ${end_time}`,
+    `- Duration: ${segments.length} segments`,
+    ``
+  ].join('\n');
+  
+  // Create transcript content section
+  const transcriptContent = [
+    `TRANSCRIPT CONTENT:`,
+    ``
+  ];
+  
+  // Group segments by speaker and format them
+  let currentSpeaker = null;
+  let speakerSegments = [];
+  
+  segments.forEach((segment, index) => {
+    const speaker = segment.speaker || 'Unknown Speaker';
+    const text = segment.text.trim();
+    const timestamp = `[${Math.floor(segment.start)}s-${Math.floor(segment.end)}s]`;
+    
+    if (speaker !== currentSpeaker) {
+      // Finish previous speaker's segments
+      if (currentSpeaker && speakerSegments.length > 0) {
+        transcriptContent.push(`${currentSpeaker}:`);
+        transcriptContent.push(speakerSegments.join(' '));
+        transcriptContent.push('');
+      }
+      
+      // Start new speaker
+      currentSpeaker = speaker;
+      speakerSegments = [`${timestamp} ${text}`];
+    } else {
+      // Continue with same speaker
+      speakerSegments.push(`${timestamp} ${text}`);
+    }
+  });
+  
+  // Add the last speaker's segments
+  if (currentSpeaker && speakerSegments.length > 0) {
+    transcriptContent.push(`${currentSpeaker}:`);
+    transcriptContent.push(speakerSegments.join(' '));
+    transcriptContent.push('');
+  }
+  
+  // Add analysis hints for the agent
+  const analysisHints = [
+    `ANALYSIS GUIDELINES:`,
+    `- Extract action items, tasks, and decisions from the conversation`,
+    `- Look for references to existing Linear issues or project work`,
+    `- Identify new features, bugs, or improvements discussed`,
+    `- Note any deadlines, priorities, or assignments mentioned`,
+    `- Consider the context and technical nature of the discussion`,
+    `- Create appropriate Linear issues for actionable items`,
+    ``
+  ].join('\n');
+  
+  return [metadata, transcriptContent.join('\n'), analysisHints].join('\n');
 }
 
 // API Routes
@@ -752,23 +828,36 @@ app.post('/api/agents/register', (req, res) => {
 // List agents
 app.get('/api/agents', (req, res) => {
   try {
-    const { appName } = req.query;
+    const { appName, includeUndiscoverable } = req.query;
     const agents = agentManager.listAgents(appName);
+    
+    // Filter out undiscoverable agents unless explicitly requested
+    const filteredAgents = includeUndiscoverable === 'true' 
+      ? agents 
+      : agents.filter(agent => {
+          const a = ensureDiscoverable(agent);
+          return a.discoverable !== false;
+        });
+    
+    console.log(`[API] Listing agents: found ${agents.length} total, returning ${filteredAgents.length} discoverable`);
     
     res.json({
       success: true,
-      agents: agents.map(agent => ({
-        id: agent.id,
-        appName: agent.appName,
-        name: agent.name,
-        description: agent.description,
-        url: agent.url,
-        actions: agent.actions,
-        created: agent.created,
-        status: 'active'
-      }))
+      agents: filteredAgents.map(agent => {
+        const a = ensureDiscoverable(agent);
+        return {
+          id: a.id,
+          appName: a.appName,
+          name: a.name,
+          description: a.description,
+          url: a.url,
+          actions: a.actions,
+          created: a.created,
+          discoverable: a.discoverable !== false,
+          status: 'active',
+        };
+      })
     });
-
   } catch (error) {
     console.error('[API] Error listing agents:', error);
     res.status(500).json({ error: error.message });
@@ -808,8 +897,27 @@ app.post('/api/agents/:agentId/delegate', async (req, res) => {
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
-    // Handle standalone agents differently - they just return a mock response
-    if (agent.type === 'standalone') {
+    // Handle standalone agents differently - call their actual methods
+    if (agent.type === 'standalone' && agent.agent) {
+      console.log(`[API] Delegating task to standalone agent ${agentId}:`, message);
+      
+      try {
+        // Call the agent's invoke method directly
+        const result = await agent.agent.invoke(message);
+        
+        return res.json({
+          success: true,
+          response: result.output || result
+        });
+      } catch (error) {
+        console.error(`[API] Error invoking standalone agent ${agentId}:`, error);
+        return res.status(500).json({
+          success: false,
+          error: `Agent error: ${error.message}`
+        });
+      }
+    } else if (agent.type === 'standalone') {
+      // Fallback for standalone agents without actual agent instance
       console.log(`[API] Delegating task to standalone agent ${agentId}:`, message);
       const mockResponse = `Hello! I'm ${agent.name}. I received your message: "${message}". This is a mock response since I'm a standalone agent. Available tools: ${agent.actions.join(', ')}`;
       
@@ -873,6 +981,68 @@ app.post('/api/agents/:agentId/delegate', async (req, res) => {
   }
 });
 
+// New meeting transcript endpoint
+app.post('/api/meeting/transcript', async (req, res) => {
+  try {
+    const { meetingId, transcript } = req.body;
+    
+    // Validate required fields
+    if (!meetingId || !transcript) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: meetingId and transcript are required' 
+      });
+    }
+
+    // Validate field types and structure
+    if (typeof meetingId !== 'string') {
+      return res.status(400).json({ 
+        error: 'Invalid meetingId: must be a string' 
+      });
+    }
+
+    if (typeof transcript !== 'object' || !transcript.segments || !Array.isArray(transcript.segments)) {
+      return res.status(400).json({ 
+        error: 'Invalid transcript: must be an object with a segments array' 
+      });
+    }
+
+    console.log(`[Meeting API] Processing transcript for meeting ${meetingId}`);
+    console.log(`[Meeting API] Transcript has ${transcript.segments.length} segments`);
+    
+    // Convert transcript object to formatted string for the agent
+    const formattedTranscript = formatTranscriptForAgent(transcript);
+    
+    // Call the Linear meeting agent function with formatted transcript
+    const result = await runLinearMeetingAgent({ 
+      meetingId, 
+      transcript: formattedTranscript
+    });
+    
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        meetingId: result.meetingId,
+        output: result.output,
+        timestamp: result.timestamp
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Agent processing failed',
+        meetingId: result.meetingId,
+        timestamp: result.timestamp
+      });
+    }
+
+  } catch (error) {
+    console.error('[Meeting API] Error processing transcript:', error);
+    res.status(500).json({ 
+      error: 'Agent processing failed',
+      details: error.message 
+    });
+  }
+});
+
 // Linear Meeting Agent specific endpoints
 app.post('/api/linear/process-transcript', async (req, res) => {
   try {
@@ -888,7 +1058,7 @@ app.post('/api/linear/process-transcript', async (req, res) => {
     }
 
     console.log(`[Linear API] Processing meeting transcript...`);
-    const result = await linearAgent.agent.processTranscript(transcript);
+    const result = await linearAgent.agent.processMeeting(transcript);
     
     res.json(result);
 
@@ -908,7 +1078,7 @@ app.get('/api/linear/issues', async (req, res) => {
       return res.status(404).json({ error: 'Linear Meeting Agent not available' });
     }
 
-    const result = await linearAgent.agent.listIssues();
+    const result = await linearAgent.agent.invoke('List all Linear issues for the Faktions project using LINEAR_LIST_LINEAR_ISSUES');
     res.json(result);
 
   } catch (error) {
@@ -927,7 +1097,7 @@ app.get('/api/linear/teams', async (req, res) => {
       return res.status(404).json({ error: 'Linear Meeting Agent not available' });
     }
 
-    const result = await linearAgent.agent.listTeams();
+    const result = await linearAgent.agent.invoke('Get team information for the Faktions project using LINEAR_LIST_LINEAR_TEAMS');
     res.json(result);
 
   } catch (error) {
@@ -941,7 +1111,7 @@ app.get('/api/linear/teams', async (req, res) => {
 
 app.post('/api/linear/issues', async (req, res) => {
   try {
-    const { title, description, priority, teamId } = req.body;
+    const { title, description, priority, teamId, parentId } = req.body;
     
     if (!title || !description) {
       return res.status(400).json({ error: 'Title and description are required' });
@@ -952,7 +1122,17 @@ app.post('/api/linear/issues', async (req, res) => {
       return res.status(404).json({ error: 'Linear Meeting Agent not available' });
     }
 
-    const result = await linearAgent.agent.createIssue(title, description, priority, teamId);
+    let prompt = `Create a Linear issue with the following details:
+- Title: "${title}"
+- Description: "${description}"`;
+    
+    if (priority) prompt += `\n- Priority: ${priority}`;
+    if (teamId) prompt += `\n- Team ID: ${teamId}`;
+    if (parentId) prompt += `\n- Parent ID: ${parentId} (create as subtask)`;
+    
+    prompt += '\n\nUse the appropriate Linear tools to create this issue.';
+
+    const result = await linearAgent.agent.invoke(prompt);
     res.json(result);
 
   } catch (error) {
@@ -960,6 +1140,382 @@ app.post('/api/linear/issues', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error.message 
+    });
+  }
+});
+
+// Patch 3: Add toggle-discoverable endpoint
+app.post('/api/agents/:id/toggle-discoverable', (req, res) => {
+  try {
+    console.log(`[API] Toggling discoverable status for agent: ${req.params.id}`);
+    
+    const agent = agentManager.getAgent(req.params.id);
+    if (!agent) {
+      console.log(`[API] Agent not found: ${req.params.id}`);
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    console.log(`[API] Current discoverable status: ${agent.discoverable}`);
+    agent.discoverable = !agent.discoverable;
+    console.log(`[API] New discoverable status: ${agent.discoverable}`);
+    
+    res.json({ success: true, discoverable: agent.discoverable });
+  } catch (error) {
+    console.error(`[API] Error toggling agent discoverable status:`, error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== SWARM AGENTS SERVICE =====
+
+// Initialize Swarm Manager and Meeting Summarizer
+console.log('🔄 Initializing Swarm Manager...');
+const swarmManager = new SwarmManager();
+
+console.log('🔄 Initializing Meeting Summarizer...');
+const meetingSummarizer = new MeetingSummarizer();
+console.log('✅ Swarm Manager initialized');
+
+// Swarm endpoints
+
+// Example: Add logging middleware for all requests
+app.use((req, res, next) => {
+  const body = req.body && typeof req.body === 'object' ? JSON.stringify(req.body) : req.body;
+  console.log(`[SwarmAPI][Request] ${req.method} ${req.originalUrl} | Params: ${JSON.stringify(req.params)} | Query: ${JSON.stringify(req.query)} | Body:`, body && body.length > 500 ? body.slice(0, 500) + '...[truncated]' : body);
+  next();
+});
+
+// Get all available agents in the swarm
+app.get('/api/swarm/agents', (req, res) => {
+  try {
+    console.log('[SwarmAPI] Getting all available agents');
+    
+    const agents = swarmManager.getAllAgentsInfo();
+    
+    res.json({
+      success: true,
+      agents: agents,
+      availableAgents: swarmManager.getAvailableAgents(),
+      totalAgents: swarmManager.getAvailableAgents().length
+    });
+    
+  } catch (error) {
+    console.error('[SwarmAPI] Error getting agents:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get specific agent information
+app.get('/api/swarm/agents/:agentType', (req, res) => {
+  try {
+    const { agentType } = req.params;
+    console.log(`[SwarmAPI] Getting agent info for: ${agentType}`);
+    
+    const agentInfo = swarmManager.getAgentInfo(agentType);
+    
+    if (agentInfo.status === 'not_found') {
+      return res.status(404).json({
+        success: false,
+        error: `Agent type '${agentType}' not found`,
+        availableAgents: swarmManager.getAvailableAgents()
+      });
+    }
+    
+    res.json({
+      success: true,
+      agent: agentInfo
+    });
+    
+  } catch (error) {
+    console.error(`[SwarmAPI] Error getting agent info for ${req.params.agentType}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Process request with specific agent
+app.post('/api/swarm/agents/:agentType/process', async (req, res) => {
+  try {
+    const { agentType } = req.params;
+    const { request, meetingId } = req.body;
+    
+    if (!request) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request content is required'
+      });
+    }
+    
+    console.log(`[SwarmAPI] Processing request with ${agentType} agent:`, request);
+    
+    const result = await swarmManager.routeRequest(agentType, request);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        agentType: result.agentType,
+        result: result.result,
+        meetingId: meetingId || null,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        agentType: result.agentType,
+        error: result.error,
+        meetingId: meetingId || null,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[SwarmAPI] Error processing request with ${req.params.agentType}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Process meeting transcript with specific agent
+app.post('/api/swarm/agents/:agentType/process-transcript', async (req, res) => {
+  try {
+    const { agentType } = req.params;
+    const { transcript, meetingId, userId } = req.body;
+    
+    if (!transcript) {
+      return res.status(400).json({
+        success: false,
+        error: 'Transcript is required'
+      });
+    }
+    
+    if (!meetingId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Meeting ID is required'
+      });
+    }
+    
+    console.log(`[SwarmAPI] Processing meeting transcript with ${agentType} agent for meeting ${meetingId}`);
+    
+    // Use the new swarm method for processing meeting transcripts
+    const result = await swarmManager.processMeetingTranscript(agentType, transcript, meetingId, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        agentType: result.agentType,
+        meetingId: result.meetingId,
+        result: result.result,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        agentType: result.agentType,
+        meetingId: result.meetingId,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[SwarmAPI] Error processing meeting transcript with ${agentType}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      meetingId: req.body.meetingId || null,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// New dedicated endpoint: Process transcript with LLM summarizer then send to swarm
+app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    let { transcript, meetingId, agentType, userId } = req.body;
+    
+    if (!transcript) {
+      return res.status(400).json({
+        success: false,
+        error: 'Transcript is required'
+      });
+    }
+    
+    if (!meetingId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Meeting ID is required'
+      });
+    }
+    
+    // Default agentType to 'linear' if not provided
+    if (!agentType) {
+      agentType = 'linear';
+    }
+    // Default userId to 'test_user' if not provided
+    if (!userId) {
+      userId = 'test_user';
+    }
+    
+    console.log(`[SwarmAPI] Processing transcript with summarizer for meeting ${meetingId} using ${agentType} agent`);
+    
+    // Step 1: Process transcript with summarizer
+    const summaryResult = await meetingSummarizer.processCompleteWorkflow(transcript, meetingId);
+    
+    if (!summaryResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to process transcript with summarizer',
+        details: summaryResult.error,
+        meetingId: meetingId,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Step 2: Send action items to swarm agent
+    const agentPrompt = `
+Based on this meeting analysis, please create appropriate tasks/issues:
+
+MEETING ID: ${meetingId}
+
+MEETING SUMMARY:
+${summaryResult.summary}
+
+EXTRACTED ACTION ITEMS:
+${summaryResult.actionItems || 'No specific action items extracted'}
+
+Instructions:
+1. Create tasks/issues for each actionable item
+2. Use appropriate titles, descriptions, and priorities
+3. Include meeting context and relevant quotes
+4. Set proper assignees if mentioned
+5. Apply relevant labels/tags (e.g., "meeting", "action-item")
+
+Please process these items and create the appropriate tasks/issues.
+`;
+
+    const swarmResult = await swarmManager.routeRequest(agentType, agentPrompt, userId);
+    
+    if (swarmResult.success) {
+      console.log(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Success | meetingId: ${meetingId} | agentType: ${agentType} | Duration: ${Date.now() - startTime}ms`);
+      res.json({
+        success: true,
+        meetingId: meetingId,
+        agentType: agentType,
+        summary: {
+          formattedTranscript: summaryResult.formattedTranscript,
+          summary: summaryResult.summary,
+          actionItems: summaryResult.actionItems,
+          actionItemsError: summaryResult.actionItemsError
+        },
+        swarmResult: swarmResult.result,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      console.log(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Error | meetingId: ${meetingId} | agentType: ${agentType} | Duration: ${Date.now() - startTime}ms | Error: ${swarmResult.error}`);
+      res.status(500).json({
+        success: false,
+        meetingId: meetingId,
+        agentType: agentType,
+        summary: {
+          formattedTranscript: summaryResult.formattedTranscript,
+          summary: summaryResult.summary,
+          actionItems: summaryResult.actionItems,
+          actionItemsError: summaryResult.actionItemsError
+        },
+        swarmError: swarmResult.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Exception | meetingId: ${req.body.meetingId || null} | agentType: ${req.body.agentType || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      meetingId: req.body.meetingId || null,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Bulk operations for agents
+app.post('/api/swarm/agents/:agentType/bulk-create', async (req, res) => {
+  try {
+    const { agentType } = req.params;
+    const { items, userId } = req.body;
+    
+    if (!items || !Array.isArray(items)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Items array is required'
+      });
+    }
+    
+    console.log(`[SwarmAPI] Bulk creating ${items.length} items with ${agentType} agent`);
+    
+    // Use the swarm manager to route bulk creation requests
+    const bulkPrompt = `
+Create the following items in bulk:
+
+${items.map((item, index) => `
+Item ${index + 1}:
+${JSON.stringify(item, null, 2)}
+`).join('\n')}
+
+Please create all these items and provide a summary of what was created.
+`;
+
+    const result = await swarmManager.routeRequest(agentType, bulkPrompt, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        agentType: result.agentType,
+        itemsCount: items.length,
+        result: result.result,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        agentType: result.agentType,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[SwarmAPI] Error bulk creating items with ${agentType}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Health check for swarm
+app.get('/api/swarm/health', (req, res) => {
+  try {
+    const healthInfo = swarmManager.getHealth();
+    
+    res.json(healthInfo);
+    
+  } catch (error) {
+    console.error('[SwarmAPI] Error checking swarm health:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -989,3 +1545,11 @@ process.on('SIGINT', async () => {
   console.log('👋 A2A Backend Server shut down gracefully');
   process.exit(0);
 });
+
+// Patch: Add a discoverable property to agents and toggle endpoint
+
+// Patch 1: Ensure all agents have discoverable property (default true)
+const ensureDiscoverable = (agent) => {
+  if (typeof agent.discoverable !== 'boolean') agent.discoverable = true;
+  return agent;
+};

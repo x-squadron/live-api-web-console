@@ -90,5 +90,6 @@
     "os": false,
     "path": false,
     "child_process": false
-  }
+  },
+  "proxy": "http://localhost:3001"
 }

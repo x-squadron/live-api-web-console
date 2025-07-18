@@ -27,6 +27,7 @@ import AudioPulse from "../audio-pulse/AudioPulse";
 import "./control-tray.scss";
 import SettingsDialog from "../settings-dialog/SettingsDialog";
 import ComposioButton from "../composio-button/composioButton";
+import AgentsButton from "../agents/AgentsButton";
 
 export type ControlTrayProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -216,6 +217,7 @@ function ControlTray({
         <span className="text-indicator">Streaming</span>
       </div>
       <ComposioButton />
+      <AgentsButton />
       {enableEditingSettings ? <SettingsDialog /> : ""}
     </section>
   );

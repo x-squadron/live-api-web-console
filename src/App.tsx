@@ -202,6 +202,11 @@ When users ask about app-specific tasks (Google Calendar, Gmail, Linear, Slack, 
    - agentId: The exact agent ID from discover_agents response (format: "agent-{appname}" where appname is lowercase with spaces as hyphens)
    - message: A clear, specific task description for the specialized agent
 
+**IMPORTANT MESSAGE FORMATTING:**
+- When delegating tasks with multiline content, lists, or special characters, ensure the message parameter is properly formatted
+- The message can contain newlines, bullet points, and structured content - it will be handled correctly
+- Do not worry about escaping special characters in the message parameter
+
 **MULTI-AGENT COORDINATION RULES:**
 - If a task requires multiple agents (e.g., "check my calendar and send an email"), you MUST:
   1. Discover all relevant agents first

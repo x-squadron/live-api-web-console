@@ -9,6 +9,68 @@ import { z } from 'zod';
 dotenv.config();
 
 /**
+ * Meeting Summarizer - Step 1: Simple LLM for transcript summarization
+ * This handles only the meeting summary generation without any agent tools
+ */
+class MeetingSummarizer {
+  constructor() {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is required');
+    }
+
+    this.llm = new ChatOpenAI({
+      modelName: 'gpt-4o-mini',
+      temperature: 0.1,
+      openAIApiKey: process.env.OPENAI_API_KEY
+    });
+  }
+
+  async summarize(transcript) {
+    try {
+      console.log('[MeetingSummarizer] Creating meeting summary...');
+      
+      const prompt = `You are an expert assistant tasked with generating a clear, structured, and professional summary of a technical meeting from a transcript.
+Your mission is to produce a summary that matches the style used by the team. The expected format contains four distinct sections:
+
+**1. Key takeaways**
+List the key lessons from the meeting in English, in clear and concise paragraphs. Each paragraph should summarize a central idea, including the names of the people involved, their roles, and the objectives discussed. Maintain a professional and analytical tone. If the meeting is technical, mention tools, bugs, APIs, workflows, or proposed solutions.
+
+**2. Action items**
+List concrete actions assigned to each participant, as bullet points, starting each item with the full name of the person concerned. Use infinitive verbs to formulate the action.
+
+**3. Small talk**
+Indicate "None" if no informal exchanges took place. Otherwise, briefly summarize non-technical discussions.
+
+**4. Summary**
+Write a summary structured by theme. Structure it with clear headings (for example: "Local Deployment", "Event-Driven Architecture", "Technical Issues", "Transcription Management", etc.), followed by timestamped points if available (for example, 2:17). Use an informative and precise tone. Mention decisions made, problems identified, solutions proposed, and next steps. The summary should reflect the full richness of the meeting.
+
+---
+
+Do not start responding until you have fully understood the entire transcript provided. If the transcript contains errors or inconsistencies, correct them in the summary.
+You must ALWAYS respect the above format.
+
+MEETING TRANSCRIPT:
+${transcript}`;
+
+      const result = await this.llm.invoke(prompt);
+      console.log('[MeetingSummarizer] Summary generated successfully');
+      
+      return {
+        success: true,
+        summary: result.content
+      };
+      
+    } catch (error) {
+      console.error('[MeetingSummarizer] Error creating summary:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+
+/**
  * Linear Meeting Agent using the same working approach as dynamic agents
  */
 class LinearMeetingAgent {
@@ -34,6 +96,35 @@ class LinearMeetingAgent {
 
     this.reactAgent = null;
     this.userId = process.env.COMPOSIO_ENTITY_ID || 'default_user';
+    
+    // Add loop prevention
+    this.toolCallCount = 0;
+    this.maxToolCalls = 20;
+    this.toolCallHistory = [];
+  }
+
+  // Helper method to format tool responses clearly
+  formatToolResponse(toolName, result, success = true) {
+    try {
+      const data = typeof result === 'string' ? JSON.parse(result) : result;
+      
+      if (success) {
+        return `✅ ${toolName} executed successfully.\nData: ${JSON.stringify(data, null, 2)}`;
+      } else {
+        return `❌ ${toolName} failed.\nError: ${JSON.stringify(data, null, 2)}`;
+      }
+    } catch (error) {
+      return `✅ ${toolName} executed.\nResult: ${result}`;
+    }
+  }
+
+  // Helper method to check for repetitive tool calls
+  isRepetitiveCall(toolName, args) {
+    const callSignature = `${toolName}:${JSON.stringify(args)}`;
+    const recentCalls = this.toolCallHistory.slice(-5); // Check last 5 calls
+    const repetitions = recentCalls.filter(call => call === callSignature).length;
+    
+    return repetitions >= 3; // Prevent more than 3 identical calls
   }
 
   async createComposioTools(actions) {
@@ -88,7 +179,23 @@ class LinearMeetingAgent {
           ),
           func: async (args) => {
             try {
-              console.log(`[Tool Execution] ${tool.function.name}:`, args);
+              // Check for loop prevention
+              this.toolCallCount++;
+              
+              if (this.toolCallCount > this.maxToolCalls) {
+                return `❌ Maximum tool calls (${this.maxToolCalls}) reached. Stopping to prevent infinite loops.`;
+              }
+              
+              // Check for repetitive calls
+              if (this.isRepetitiveCall(tool.function.name, args)) {
+                return `❌ Repetitive call detected for ${tool.function.name}. Skipping to prevent loops.`;
+              }
+              
+              // Track this call
+              const callSignature = `${tool.function.name}:${JSON.stringify(args)}`;
+              this.toolCallHistory.push(callSignature);
+              
+              console.log(`[Tool Execution ${this.toolCallCount}/${this.maxToolCalls}] ${tool.function.name}:`, args);
               
               // Execute the tool using Composio with the same approach as dynamic agents
               const toolCall = {
@@ -106,11 +213,13 @@ class LinearMeetingAgent {
               );
               
               console.log(`[Tool Result] ${tool.function.name}:`, result);
-              return JSON.stringify(result);
+              
+              // Format the response to be clearer for the agent
+              return this.formatToolResponse(tool.function.name, result, true);
               
             } catch (error) {
               console.error(`[Tool Error] ${tool.function.name}:`, error);
-              return `Error executing ${tool.function.name}: ${error.message}`;
+              return this.formatToolResponse(tool.function.name, `Error: ${error.message}`, false);
             }
           }
         });
@@ -136,54 +245,68 @@ class LinearMeetingAgent {
       'LINEAR_UPDATE_ISSUE',
       'LINEAR_DELETE_LINEAR_ISSUE',
       'LINEAR_LIST_LINEAR_TEAMS',
-      'LINEAR_LIST_LINEAR_STATES'
+      'LINEAR_LIST_LINEAR_STATES',
+      'LINEAR_CREATE_LINEAR_COMMENT'
     ];
 
     const tools = await this.createComposioTools(actions);
     console.log(`[LinearMeetingAgent] Got ${tools.length} tools`);
 
     // Create system prompt
-    const systemPrompt = `You are a Linear Meeting Agent that manages Linear issues autonomously based on meeting transcripts.
+    const currentDateTime = new Date().toLocaleString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short'
+    });
+    
+    const systemPrompt = `You are a Linear Meeting Agent that manages Linear issues autonomously based on meeting summaries.
+
+CURRENT DATE AND TIME: ${currentDateTime}
+
+CRITICAL INSTRUCTIONS:
+- You will receive a meeting summary (already processed) and should focus ONLY on Linear issue management
+- Do NOT create meeting summaries - that has already been done in a previous step
+- Execute tasks efficiently and STOP when you have completed all required actions
+- Do NOT repeat the same tool calls multiple times - if a tool succeeds, move on to the next task
 
 AVAILABLE TOOLS:
 - LINEAR_LIST_LINEAR_PROJECTS: List projects with their teams and IDs (start here to get project_id)
 - LINEAR_LIST_LINEAR_TEAMS: Get team information using project_id (needed for creating issues)
 - LINEAR_LIST_LINEAR_ISSUES: List existing Linear issues in the workspace (filter by project if needed)
 - LINEAR_LIST_LINEAR_STATES: Get all possible states (To Do, In Progress, Done, etc.) with their UUIDs
-- LINEAR_CREATE_LINEAR_ISSUE: Create new Linear issues (requires: title, description, team_id, and optionally state_id)
-- LINEAR_UPDATE_ISSUE: Update existing issues (status using state_id, priority, etc.)
+- LINEAR_CREATE_LINEAR_ISSUE: Create new Linear issues (requires: title, description, team_id, and optionally state_id, parent_id for subtasks)
+- LINEAR_UPDATE_ISSUE: Update existing issues (status using state_id, priority, parent_id for converting to subtask, etc.)
 - LINEAR_DELETE_LINEAR_ISSUE: Delete issues by ID when they are no longer needed
+- LINEAR_CREATE_LINEAR_COMMENT: Add comments to existing issues by issue_id (use for progress updates, notes, clarifications)
 
-ENHANCED WORKFLOW FOR MEETING TRANSCRIPT PROCESSING:
-1. **DISCOVERY PHASE:**
-   - First use LINEAR_LIST_LINEAR_PROJECTS to get the project ID for "Faktions" project
-   - Use the project_id to get team_id via LINEAR_LIST_LINEAR_TEAMS
-   - List existing issues for the project using LINEAR_LIST_LINEAR_ISSUES
-   - Get available states and their UUIDs using LINEAR_LIST_LINEAR_STATES
+WORKFLOW:
+1. **DISCOVERY** (do this ONCE only):
+   - Get project info using LINEAR_LIST_LINEAR_PROJECTS for "Agent Test" project
+   - Get team info using LINEAR_LIST_LINEAR_TEAMS
+   - List existing issues using LINEAR_LIST_LINEAR_ISSUES
+   - Get available states using LINEAR_LIST_LINEAR_STATES
 
-2. **ANALYSIS PHASE:**
-   - Analyze the meeting transcript to identify:
-     * New action items/tasks that need Linear issues
-     * Existing issues mentioned that need status updates
-     * Completed items that should be moved to "Done" state
-     * Issues that are no longer relevant and should be deleted
+2. **EXECUTION** (based on meeting summary):
+   - Create new issues for action items mentioned in summary
+   - Update existing issues if mentioned in summary
+   - Add comments to issues if needed
+   - Delete issues if mentioned as cancelled in summary
 
-3. **EXECUTION PHASE:**
-   - Create new issues for identified action items (use appropriate state_id from LINEAR_LIST_LINEAR_STATES)
-   - Update existing issues' states based on progress mentioned in transcript
-   - Delete issues that are mentioned as cancelled or no longer needed
-   - Provide a comprehensive summary of all actions taken
+3. **COMPLETION**:
+   - Provide a clear summary of all actions taken
+   - STOP executing tools once you have completed all required actions
 
-IMPORTANT GUIDELINES:
-- Always start by getting project info, team info, current issues, and available states
-- When creating issues, use team_id from step 1 and appropriate state_id from LINEAR_LIST_LINEAR_STATES
-- When updating issues, use state_id from LINEAR_LIST_LINEAR_STATES to set correct status
-- Be thorough in your analysis - extract all actionable items from transcripts
-- Provide detailed summaries of what was created, updated, or deleted
-- Execute all necessary operations - don't just describe what you would do
-- We are working on the "Faktions" project
-
-Be autonomous, thorough, and systematic in managing Linear issues based on meeting content.`;
+IMPORTANT RULES:
+- Work on the "Agent Test" project
+- When a tool succeeds (shows ✅), do NOT call it again with the same parameters
+- If you get the information you need, proceed to the next step
+- If a tool fails, try once more, then move on
+- Be efficient - don't over-execute tools
+- STOP when you have completed all required actions`;
 
     // Create React agent with memory using the same approach as dynamic agents
     const memory = new MemorySaver();
@@ -197,6 +320,13 @@ Be autonomous, thorough, and systematic in managing Linear issues based on meeti
     console.log('[LinearMeetingAgent] ✅ Ready with React agent');
   }
 
+  // Reset loop prevention counters for each new invocation
+  resetLoopPrevention() {
+    this.toolCallCount = 0;
+    this.toolCallHistory = [];
+    console.log('[LinearMeetingAgent] Loop prevention counters reset');
+  }
+
   async invoke(input) {
     if (!this.reactAgent) {
       throw new Error('Agent not initialized. Call initialize() first.');
@@ -204,6 +334,9 @@ Be autonomous, thorough, and systematic in managing Linear issues based on meeti
 
     try {
       console.log(`[LinearMeetingAgent] Processing: ${input}`);
+      
+      // Reset loop prevention for each new invocation
+      this.resetLoopPrevention();
       
       // Use the same invocation approach as dynamic agents
       const config = {
@@ -223,6 +356,8 @@ Be autonomous, thorough, and systematic in managing Linear issues based on meeti
       const output = lastMessage?.content || 'No response generated';
 
       console.log(`[LinearMeetingAgent] Response: ${output}`);
+      console.log(`[LinearMeetingAgent] Total tool calls used: ${this.toolCallCount}/${this.maxToolCalls}`);
+      
       return { output };
 
     } catch (error) {
@@ -232,7 +367,7 @@ Be autonomous, thorough, and systematic in managing Linear issues based on meeti
   }
 
   // Method to get project setup information for Linear operations
-  async getProjectSetup(projectName = "Faktions") {
+  /* async getProjectSetup(projectName = "Faktions") {
     const prompt = `Get the complete setup information for the "${projectName}" project:
 
 1. Use LINEAR_LIST_LINEAR_PROJECTS to find the "${projectName}" project and get its project_id
@@ -290,9 +425,86 @@ Provide a comprehensive report including:
 Execute all operations completely - don't just plan or describe what you would do.`;
 
     return await this.invoke(prompt);
-  }
+  } */
 }
 
 export function createLinearAgent() {
   return new LinearMeetingAgent();
+}
+
+export function createMeetingSummarizer() {
+  return new MeetingSummarizer();
+}
+
+/**
+ * Main function to run the two-step Linear Meeting process
+ * Step 1: Create summary using MeetingSummarizer
+ * Step 2: Process summary with LinearMeetingAgent for issue management
+ * @param {Object} params - The parameters object
+ * @param {string} params.meetingId - The unique identifier for the meeting
+ * @param {string} params.transcript - The meeting transcript to process
+ * @returns {Promise<Object>} Result object with success status and agent output
+ */
+export async function runLinearMeetingAgent({ meetingId, transcript }) {
+  try {
+    console.log(`[runLinearMeetingAgent] Starting two-step processing for meeting ${meetingId}`);
+    
+    // Step 1: Create meeting summary using MeetingSummarizer
+    console.log(`[runLinearMeetingAgent] Step 1: Creating meeting summary...`);
+    const summarizer = new MeetingSummarizer();
+    const summaryResult = await summarizer.summarize(transcript);
+    
+    if (!summaryResult.success) {
+      throw new Error(`Summary creation failed: ${summaryResult.error}`);
+    }
+    
+    console.log(`[runLinearMeetingAgent] Step 1 completed: Summary created successfully`);
+    
+    // Step 2: Process summary with Linear agent for issue management
+    console.log(`[runLinearMeetingAgent] Step 2: Processing summary with Linear agent...`);
+    const agent = new LinearMeetingAgent();
+    await agent.initialize();
+    
+    // Create the prompt for the agent with the summary
+    const prompt = `Process this meeting summary and manage Linear issues accordingly:
+
+MEETING ID: ${meetingId}
+
+MEETING SUMMARY:
+${summaryResult.summary}
+
+INSTRUCTIONS:
+Follow the enhanced workflow to:
+1. Get current project and team information
+2. Analyze the summary for actionable items
+3. Create, update, or delete Linear issues as needed
+4. Provide a comprehensive summary of all actions taken
+
+Be thorough and execute all necessary operations based on the meeting summary above.`;
+
+    // Process the summary with the agent
+    const result = await agent.invoke(prompt);
+    
+    console.log(`[runLinearMeetingAgent] Step 2 completed: Linear issues processed successfully`);
+    console.log(`[runLinearMeetingAgent] Successfully processed meeting ${meetingId}`);
+    
+    return {
+      success: true,
+      meetingId,
+      summary: summaryResult.summary,
+      linearOutput: result.output,
+      output: `MEETING SUMMARY:\n${summaryResult.summary}\n\nLINEAR ISSUE MANAGEMENT:\n${result.output}`,
+      timestamp: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    console.error(`[runLinearMeetingAgent] Error processing meeting ${meetingId}:`, error);
+    
+    return {
+      success: false,
+      meetingId,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
+  }
 } 

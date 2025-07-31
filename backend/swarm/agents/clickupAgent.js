@@ -2,6 +2,7 @@ import { createHandoffTool } from "@langchain/langgraph-swarm";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { ChatOpenAI } from "@langchain/openai";
 import { clickupTools } from "../tools/composioTools.js";
+import { interSwarmTools } from "../tools/interSwarmTools.js";
 
 // Create handoff tool to Linear assistant
 const transferToLinearAssistant = createHandoffTool({
@@ -20,7 +21,7 @@ export const clickupAssistant = createReactAgent({
     model: "gpt-4o-mini",
     temperature: 0.1,
   }),
-  tools: [...clickupTools, transferToLinearAssistant],
+  tools: [...clickupTools, transferToLinearAssistant, ...interSwarmTools],
   prompt: `You are an autonomous ClickUp specialist agent in a multi-agent swarm system.
 
 **CURRENT DATE AND TIME**: Use current date/time for relative references.

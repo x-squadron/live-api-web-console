@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import multer from 'multer';
 import {
   A2AServer,
   A2AClient,
@@ -16,6 +17,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { createLinearAgent, runLinearMeetingAgent } from './LinearMeetingAgent.js';
 import { SwarmManager, MeetingSummarizer } from './swarm/index.js';
+import { MultiSwarmManager, AgentFactory } from './swarm/index.js';
 
 console.log('🔄 Starting A2A Backend Server with LangChain React Agents...');
 
@@ -36,6 +38,20 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 console.log('✅ Middleware configured');
+
+// Configure multer for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept text files and allow all file types for now
+    cb(null, true);
+  }
+});
+console.log('✅ File upload middleware configured');
 
 // Default Composio Entity ID for tool execution (can be overridden per request)
 const DEFAULT_COMPOSIO_ENTITY_ID = process.env.COMPOSIO_ENTITY_ID || 'default_user';
@@ -1381,29 +1397,46 @@ app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
       });
     }
     
-    // Step 2: Send action items to swarm agent
-    const agentPrompt = `
-Based on this meeting analysis, please create appropriate tasks/issues:
+    // Step 2: Use MeetingSummarizer's analysis agent to analyze action items with Linear context
+    const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
+      summaryResult,
+      finalMeetingId
+    );
+    
+    if (!analysisResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to analyze action items with Linear context',
+        details: analysisResult.error,
+        meetingId: finalMeetingId,
+        timestamp: new Date().toISOString()
+      });
+    }
 
-MEETING ID: ${meetingId}
+    // Step 3: Create execution prompt with specific Linear operations from analysis
+    const executionPrompt = `
+EXECUTE THESE SPECIFIC LINEAR OPERATIONS:
 
-MEETING SUMMARY:
-${summaryResult.summary}
+MEETING ID: ${finalMeetingId}
 
-EXTRACTED ACTION ITEMS:
-${summaryResult.actionItems || 'No specific action items extracted'}
+ANALYSIS RESULT:
+${analysisResult.analysis}
 
-Instructions:
-1. Create tasks/issues for each actionable item
-2. Use appropriate titles, descriptions, and priorities
-3. Include meeting context and relevant quotes
-4. Set proper assignees if mentioned
-5. Apply relevant labels/tags (e.g., "meeting", "action-item")
+EXECUTION INSTRUCTIONS:
+Follow the analysis above and execute the specified Linear operations precisely. 
+Do NOT make decisions - only execute what is specified in the analysis.
+Create, update, or comment on issues exactly as described in the analysis.
 
-Please process these items and create the appropriate tasks/issues.
+Remember to:
+1. Always assign assignees to new issues
+2. Use proper priority levels (0-4)
+3. Create subtasks with parent_id when specified
+4. Include meeting context in descriptions
+5. Notify the communication swarm when complete
 `;
 
-    const swarmResult = await swarmManager.routeRequest(agentType, agentPrompt, userId);
+    // Step 4: Send to project management swarm for execution
+    const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, finalUserId);
     
     if (swarmResult.success) {
       console.log(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Success | meetingId: ${meetingId} | agentType: ${agentType} | Duration: ${Date.now() - startTime}ms`);
@@ -1516,6 +1549,516 @@ app.get('/api/swarm/health', (req, res) => {
       success: false,
       error: error.message,
       timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ===== MULTI-SWARM MANAGEMENT SERVICE =====
+
+// Initialize Multi-Swarm Manager
+console.log('🔄 Initializing Multi-Swarm Manager...');
+const multiSwarmManager = new MultiSwarmManager();
+const agentFactory = new AgentFactory(multiSwarmManager);
+
+// Set global multiSwarmManager for inter-swarm tools
+global.multiSwarmManager = multiSwarmManager;
+
+console.log('✅ Multi-Swarm Manager initialized');
+
+// Multi-swarm endpoints
+
+// Get all swarms
+app.get('/api/multi-swarm/swarms', (req, res) => {
+  try {
+    console.log('[MultiSwarmAPI] Getting all swarms');
+    
+    const swarms = multiSwarmManager.getAllSwarms();
+    
+    res.json({
+      success: true,
+      swarms: swarms,
+      totalSwarms: Object.keys(swarms).length
+    });
+    
+  } catch (error) {
+    console.error('[MultiSwarmAPI] Error getting swarms:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get all agents across all swarms
+app.get('/api/multi-swarm/agents', (req, res) => {
+  try {
+    console.log('[MultiSwarmAPI] Getting all agents');
+    
+    const agents = multiSwarmManager.getAllAgents();
+    
+    res.json({
+      success: true,
+      agents: agents,
+      totalAgents: Object.keys(agents).length
+    });
+    
+  } catch (error) {
+    console.error('[MultiSwarmAPI] Error getting agents:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Find agents by capability
+app.get('/api/multi-swarm/agents/capability/:capability', (req, res) => {
+  try {
+    const { capability } = req.params;
+    console.log(`[MultiSwarmAPI] Finding agents with capability: ${capability}`);
+    
+    const agents = multiSwarmManager.findAgentsByCapability(capability);
+    
+    res.json({
+      success: true,
+      capability: capability,
+      agents: agents,
+      count: agents.length
+    });
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error finding agents by capability:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Create a new swarm
+app.post('/api/multi-swarm/swarms', async (req, res) => {
+  try {
+    const { swarmId, config } = req.body;
+    
+    if (!swarmId || !config) {
+      return res.status(400).json({
+        success: false,
+        error: 'Swarm ID and configuration are required'
+      });
+    }
+    
+    console.log(`[MultiSwarmAPI] Creating swarm: ${swarmId}`);
+    
+    const result = multiSwarmManager.createSwarm(swarmId, config);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        swarmId: result.swarmId,
+        message: `Swarm ${swarmId} created successfully`
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error creating swarm:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Process request with specific swarm
+app.post('/api/multi-swarm/swarms/:swarmId/process', async (req, res) => {
+  try {
+    const { swarmId } = req.params;
+    const { request, userId } = req.body;
+    
+    if (!request) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request content is required'
+      });
+    }
+    
+    console.log(`[MultiSwarmAPI] Processing request with swarm ${swarmId}:`, request);
+    
+    const result = await multiSwarmManager.processWithSwarm(swarmId, request, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        swarmId: result.swarmId,
+        response: result.response,
+        threadId: result.threadId,
+        toolCalls: result.toolCalls,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        swarmId: result.swarmId,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error processing with swarm:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Route request to best swarm
+app.post('/api/multi-swarm/route', async (req, res) => {
+  try {
+    const { request, userId } = req.body;
+    
+    if (!request) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request content is required'
+      });
+    }
+    
+    console.log(`[MultiSwarmAPI] Routing request to best swarm:`, request);
+    
+    const result = await multiSwarmManager.routeToBestSwarm(request, userId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        swarmId: result.swarmId,
+        response: result.response,
+        threadId: result.threadId,
+        toolCalls: result.toolCalls,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error routing to best swarm:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Inter-swarm communication
+app.post('/api/multi-swarm/communicate', async (req, res) => {
+  try {
+    const { fromSwarmId, toSwarmId, message, context } = req.body;
+    
+    if (!fromSwarmId || !toSwarmId || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'From swarm ID, to swarm ID, and message are required'
+      });
+    }
+    
+    console.log(`[MultiSwarmAPI] Inter-swarm communication: ${fromSwarmId} -> ${toSwarmId}`);
+    
+    const result = await multiSwarmManager.communicateBetweenSwarms(fromSwarmId, toSwarmId, message, context);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        communicationId: result.communicationId,
+        response: result.result?.response || 'No response',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error in inter-swarm communication:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Helper functions for processing different input formats
+function processTextInput(text) {
+  // Convert plain text to transcript format
+  return {
+    segments: [
+      {
+        start: 0,
+        speaker: "User",
+        text: text
+      }
+    ]
+  };
+}
+
+function processFileInput(fileBuffer, filename) {
+  const text = fileBuffer.toString('utf-8');
+  console.log(`[FileProcessor] Processing file: ${filename} (${text.length} characters)`);
+  
+  // For .txt files, treat as plain text
+  if (filename.toLowerCase().endsWith('.txt')) {
+    return processTextInput(text);
+  }
+  
+  // For other files, try to parse as JSON first, then fallback to text
+  try {
+    const jsonData = JSON.parse(text);
+    if (jsonData.segments || jsonData.transcript) {
+      return jsonData.segments ? jsonData : jsonData.transcript;
+    }
+  } catch (e) {
+    console.log(`[FileProcessor] File is not JSON, treating as plain text`);
+  }
+  
+  return processTextInput(text);
+}
+
+function generateDefaultIds() {
+  return {
+    meetingId: `meeting_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    userId: 'default_user',
+    agentType: 'linear'
+  };
+}
+
+
+
+// New specialized endpoint: Process transcript with inter-swarm communication workflow
+app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), async (req, res) => {
+  const startTime = Date.now();
+  try {
+    let { transcript, text, meetingId, agentType, userId, enableNotifications } = req.body;
+    
+    // Handle different input formats
+    let processedTranscript = null;
+    let inputSource = 'unknown';
+    
+    // Case 1: File upload
+    if (req.file) {
+      console.log(`[MultiSwarmAPI] Processing uploaded file: ${req.file.originalname} (${req.file.size} bytes)`);
+      processedTranscript = processFileInput(req.file.buffer, req.file.originalname);
+      inputSource = 'file_upload';
+    }
+    // Case 2: Plain text
+    else if (text) {
+      console.log(`[MultiSwarmAPI] Processing text input (${text.length} characters)`);
+      processedTranscript = processTextInput(text);
+      inputSource = 'text_input';
+    }
+    // Case 3: Transcript object (original format)
+    else if (transcript) {
+      console.log(`[MultiSwarmAPI] Processing transcript object`);
+      processedTranscript = transcript;
+      inputSource = 'transcript_object';
+    }
+    else {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid input found. Please provide either a file upload, text content, or transcript object.'
+      });
+    }
+    
+    // Generate default values if not provided
+    const finalMeetingId = meetingId || generateDefaultIds().meetingId;
+    const finalUserId = userId || generateDefaultIds().userId;
+    const finalAgentType = agentType || generateDefaultIds().agentType;
+    const finalEnableNotifications = enableNotifications !== false; // Default to true
+    
+    console.log(`[MultiSwarmAPI] Processing workflow for meeting ${finalMeetingId} using ${finalAgentType} agent (notifications: ${finalEnableNotifications})`);
+    
+    // Step 1: Process transcript with summarizer
+    const summaryResult = await meetingSummarizer.processCompleteWorkflow(processedTranscript, finalMeetingId);
+    
+    if (!summaryResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to process transcript with summarizer',
+        details: summaryResult.error,
+        meetingId: finalMeetingId,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Step 2: Use MeetingSummarizer's analysis agent to analyze action items with Linear context
+    const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
+      summaryResult.actionItems || 'No specific action items extracted',
+      finalMeetingId
+    );
+    
+    if (!analysisResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to analyze action items with Linear context',
+        details: analysisResult.error,
+        meetingId: finalMeetingId,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Step 3: Create execution prompt with specific Linear operations from analysis
+    const executionPrompt = `
+EXECUTE THESE SPECIFIC LINEAR OPERATIONS:
+
+MEETING ID: ${finalMeetingId}
+
+ANALYSIS RESULT:
+${analysisResult.analysis}
+
+EXECUTION INSTRUCTIONS:
+Follow the analysis above and execute the specified Linear operations precisely. 
+Do NOT make decisions - only execute what is specified in the analysis.
+Create, update, or comment on issues exactly as described in the analysis.
+
+Remember to:
+1. Always assign assignees to new issues
+2. Use proper priority levels (0-4)
+3. Create subtasks with parent_id when specified
+4. Include meeting context in descriptions
+5. Notify the communication swarm when complete
+`;
+
+    // Step 4: Send to project management swarm for execution
+    const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, finalUserId);
+    
+    if (swarmResult.success) {
+      console.log(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Success | meetingId: ${finalMeetingId} | agentType: ${finalAgentType} | Duration: ${Date.now() - startTime}ms`);
+      res.json({
+        success: true,
+        meetingId: finalMeetingId,
+        agentType: finalAgentType,
+        summary: {
+          formattedTranscript: summaryResult.formattedTranscript,
+          summary: summaryResult.summary,
+          actionItems: summaryResult.actionItems,
+          actionItemsError: summaryResult.actionItemsError
+        },
+        swarmResult: swarmResult,
+        notification: finalEnableNotifications ? {
+          enabled: true,
+          result: null // No direct notification result here, handled by swarm
+        } : {
+          enabled: false
+        },
+        inputSource: inputSource,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      console.log(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Error | meetingId: ${finalMeetingId} | agentType: ${finalAgentType} | Duration: ${Date.now() - startTime}ms | Error: ${swarmResult.error}`);
+      res.status(500).json({
+        success: false,
+        error: swarmResult.error,
+        meetingId: finalMeetingId,
+        agentType: finalAgentType,
+        summary: {
+          formattedTranscript: summaryResult.formattedTranscript,
+          summary: summaryResult.summary,
+          actionItems: summaryResult.actionItems,
+          actionItemsError: summaryResult.actionItemsError
+        },
+        swarmError: swarmResult.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Exception | meetingId: ${req.body.meetingId || null} | agentType: ${req.body.agentType || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      meetingId: req.body.meetingId || null,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Get communication history
+app.get('/api/multi-swarm/communications', (req, res) => {
+  try {
+    const { swarmId } = req.query;
+    console.log(`[MultiSwarmAPI] Getting communication history for swarm: ${swarmId || 'all'}`);
+    
+    const history = multiSwarmManager.getCommunicationHistory(swarmId);
+    
+    res.json({
+      success: true,
+      swarmId: swarmId || 'all',
+      communications: history,
+      count: history.length
+    });
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error getting communication history:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Destroy a swarm
+app.delete('/api/multi-swarm/swarms/:swarmId', (req, res) => {
+  try {
+    const { swarmId } = req.params;
+    console.log(`[MultiSwarmAPI] Destroying swarm: ${swarmId}`);
+    
+    const result = multiSwarmManager.destroySwarm(swarmId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Swarm ${swarmId} destroyed successfully`
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error
+      });
+    }
+    
+  } catch (error) {
+    console.error(`[MultiSwarmAPI] Error destroying swarm:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Health check for multi-swarm system
+app.get('/api/multi-swarm/health', (req, res) => {
+  try {
+    const healthInfo = multiSwarmManager.getHealth();
+    res.json(healthInfo);
+  } catch (error) {
+    console.error('[MultiSwarmAPI] Error checking multi-swarm health:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });

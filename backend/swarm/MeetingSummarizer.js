@@ -1,4 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
+import { linearGetIssues } from './tools/composioTools.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,6 +20,84 @@ export class MeetingSummarizer {
       temperature: 0.1,
       openAIApiKey: process.env.OPENAI_API_KEY
     });
+
+    // Create analysis agent with LINEAR_LIST_LINEAR_ISSUES tool
+    this.analysisAgent = createReactAgent({
+      llm: this.llm,
+      tools: [linearGetIssues],
+      prompt: this.generateAnalysisPrompt(),
+      name: "action_analysis_agent",
+    });
+  }
+
+  /**
+   * Generate prompt for the analysis agent
+   */
+  generateAnalysisPrompt() {
+    return `You are an Action Analysis Agent that analyzes meeting action items and provides complete execution instructions.
+
+Your task:
+1. Use LINEAR_LIST_LINEAR_ISSUES to check existing Linear issues
+2. Analyze the action items against existing issues
+3. Provide specific execution instructions for the Linear agent
+
+Available Tools:
+- LINEAR_LIST_LINEAR_ISSUES: List existing Linear issues in the workspace
+
+Instructions:
+1. First, call LINEAR_LIST_LINEAR_ISSUES to get current issues
+2. Analyze the action items against existing issues to determine:
+   - Which existing issues should be updated (with issue IDs)
+   - Which new issues should be created (with titles, descriptions, assignees, priorities)
+   - Which issues should have comments added
+3. Provide detailed execution instructions including:
+   - Specific issue IDs for updates
+   - Complete details for new issues (title, description, assignee, priority)
+   - Comment content for issues that need comments
+   - Any subtask relationships to establish
+
+Format your response as specific Linear operations that the execution agent can follow precisely.`;
+  }
+
+  /**
+   * Analyze action items with existing Linear issues context
+   */
+  async analyzeActionItemsWithContext(actionItems, meetingId) {
+    try {
+      console.log(`[MeetingSummarizer] Analyzing action items with Linear context (meetingId: ${meetingId})`);
+      
+      const analysisPrompt = `
+Analyze these action items and provide specific Linear execution instructions:
+
+ACTION ITEMS:
+${actionItems}
+
+MEETING ID: ${meetingId}
+
+Please:
+1. Use LINEAR_LIST_LINEAR_ISSUES to check existing issues
+2. Analyze what needs to be created/updated based on existing issues
+3. Provide specific execution instructions for the Linear agent
+
+Format your response as detailed Linear operations that can be executed directly.
+`;
+
+      const result = await this.analysisAgent.invoke({
+        messages: [{ role: "user", content: analysisPrompt }]
+      });
+
+      console.log('[MeetingSummarizer] Analysis completed successfully');
+      return {
+        success: true,
+        analysis: result.messages[result.messages.length - 1].content
+      };
+    } catch (error) {
+      console.error(`[MeetingSummarizer] Error analyzing action items with context (meetingId: ${meetingId}):`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
   }
 
   /**

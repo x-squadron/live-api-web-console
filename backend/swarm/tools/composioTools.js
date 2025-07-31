@@ -76,7 +76,7 @@ export const linearUpdateIssue = tool(
       issue_id: z.string().describe("ID of the issue to update"),
       title: z.string().optional().describe("New title for the issue"),
       description: z.string().optional().describe("New description for the issue"),
-      priority: z.enum(["Urgent", "High", "Medium", "Low"]).optional().describe("New priority level"),
+      priority: z.number().min(0).max(4).optional().describe("New priority level (0=No priority, 1=Low, 2=Medium, 3=High, 4=Urgent)"),
       state_id: z.string().optional().describe("New state ID for the issue"),
       assignee_id: z.string().optional().describe("New assignee ID"),
       parent_id: z.string().optional().describe("Parent issue ID for subtasks"),
@@ -222,9 +222,28 @@ export const linearTools = [
   linearGetStates,
 ];
 
+// Slack Tools
+export const slackSendMessage = tool(
+  async (args) => executeComposioTool('SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL', args),
+  {
+    name: "SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL",
+    description: "Send a message to a Slack channel",
+    schema: z.object({
+      channel: z.string().describe("Channel ID or channel name to send the message to"),
+      text: z.string().describe("Message text to send"),
+      attachments: z.array(z.object({})).optional().describe("Optional message attachments"),
+      blocks: z.array(z.object({})).optional().describe("Optional message blocks for rich formatting"),
+    }),
+  }
+);
+
 export const clickupTools = [
   clickupCreateTask,
   clickupUpdateTask,
   clickupDeleteTask,
   clickupCreateTaskComment,
+];
+
+export const slackTools = [
+  slackSendMessage,
 ]; 

@@ -39,24 +39,78 @@ export class MeetingSummarizer {
 Your task:
 1. Use LINEAR_LIST_LINEAR_ISSUES to check existing Linear issues
 2. Analyze the action items against existing issues
-3. Provide specific execution instructions for the Linear agent
+3. Provide specific execution instructions for the Linear execution agent
 
 Available Tools:
 - LINEAR_LIST_LINEAR_ISSUES: List existing Linear issues in the workspace
 
+SMART ISSUE MANAGEMENT STRATEGY:
+- DO NOT always create new issues for everything
+- FIRST check if an existing issue can be updated or commented on
+- Use SUBTASKS for related work that fits under existing issues
+- Use COMMENTS for updates, progress notes, or additional context
+- Only create NEW ISSUES when:
+  * It's a completely new, unrelated topic
+  * It's a major new feature or bug that doesn't fit existing issues
+  * It's a high-priority item that needs separate tracking
+
+STATE SELECTION RULES:
+- Always recommend a desired state for each operation when relevant (e.g., "In Progress", "Todo", "Backlog", "Done", "Canceled", "Blocked")
+- Prefer "In Progress" when someone is assigned to start working now
+- Prefer "Todo" for near-term planned work
+- Avoid defaulting to "Backlog" unless explicitly discussed as deferred
+- If the workspace uses different state names, provide the best matching generic category (todo | in_progress | done | canceled | blocked)
+
+STRICT MATCHING RULES (to avoid wrong updates/comments):
+- Compute a matching confidence (0–1) for linking an action item to an existing issue, based on title/topic similarity, project/component, assignee, labels, and any explicit issue IDs mentioned
+- Only UPDATE or COMMENT on an existing issue if matching_confidence ≥ 0.7
+- If confidence < 0.7, do NOT update/comment that issue; either create a subtask under a clearly-related parent (if appropriate) or classify as slack_only_information
+
+CLASSIFICATION:
+- Classify items into exactly one of:
+  1) linear_operations (create/update/comment/subtask)
+  2) slack_only_messages (informational notes that should be shared via Slack but NOT added to Linear)
+  3) ignore_items (not actionable)
+
 Instructions:
 1. First, call LINEAR_LIST_LINEAR_ISSUES to get current issues
 2. Analyze the action items against existing issues to determine:
-   - Which existing issues should be updated (with issue IDs)
-   - Which new issues should be created (with titles, descriptions, assignees, priorities)
-   - Which issues should have comments added
+   - Which existing issues should be UPDATED (with issue IDs)
+   - Which existing issues should have COMMENTS added (with issue IDs and comment content)
+   - Which existing issues should have SUBTASKS created (with parent issue IDs)
+   - Which NEW issues should be created (only if truly new/unrelated topics)
+   - Which items are slack_only_messages (share to Slack only, not Linear)
 3. Provide detailed execution instructions including:
-   - Specific issue IDs for updates
-   - Complete details for new issues (title, description, assignee, priority)
-   - Comment content for issues that need comments
-   - Any subtask relationships to establish
+   - Specific issue IDs for updates and comments
+   - Parent issue IDs and subtask details for subtasks
+   - Complete details for new issues (title, description, assignee, priority) - only when necessary
+   - desired_state_name and/or state_category for each operation that creates/updates an issue
+   - matching_confidence (0–1) and matching_reason for any operation that references an existing issue
 
-Format your response as specific Linear operations that the execution agent can follow precisely.`;
+PRIORITY ORDER:
+1. Update existing issues (status/state, assignee, priority, description)
+2. Add comments to existing issues (progress updates, context, notes)
+3. Create subtasks under existing issues (related work, smaller tasks)
+4. Create new issues (only for truly new/unrelated topics)
+
+OUTPUT FORMAT (return ONLY a JSON object, no prose):
+{
+  "linear_operations": [
+    {
+      "operation": "update_issue" | "add_comment" | "create_subtask" | "create_issue",
+      "issue_id": "ID-if-update-or-comment",
+      "parent_issue_id": "ID-if-subtask",
+      "new_issue": { "title": "...", "description": "...", "assignee": "name or id", "priority": 0-4 },
+      "comment": "comment text if add_comment",
+      "desired_state_name": "In Progress | Todo | Backlog | Done | Canceled | Blocked",
+      "state_category": "in_progress | todo | backlog | done | canceled | blocked",
+      "matching_confidence": 0.0,
+      "matching_reason": "why this matches the referenced issue"
+    }
+  ],
+  "slack_only_messages": ["..."],
+  "ignore_items": ["..."]
+}`;
   }
 
   /**
@@ -67,19 +121,19 @@ Format your response as specific Linear operations that the execution agent can 
       console.log(`[MeetingSummarizer] Analyzing action items with Linear context (meetingId: ${meetingId})`);
       
       const analysisPrompt = `
-Analyze these action items and provide specific Linear execution instructions:
+Analyze these action items and produce ONLY a JSON object following the OUTPUT FORMAT in your system prompt.
 
 ACTION ITEMS:
 ${actionItems}
 
 MEETING ID: ${meetingId}
 
-Please:
-1. Use LINEAR_LIST_LINEAR_ISSUES to check existing issues
-2. Analyze what needs to be created/updated based on existing issues
-3. Provide specific execution instructions for the Linear agent
-
-Format your response as detailed Linear operations that can be executed directly.
+Requirements:
+1. First, call LINEAR_LIST_LINEAR_ISSUES to gather context
+2. Classify items into linear_operations, slack_only_messages, ignore_items
+3. For linear_operations, include desired_state_name/state_category and matching_confidence/matching_reason when referencing existing issues
+4. Avoid defaulting to Backlog; recommend appropriate states
+5. Return ONLY JSON (no prose). If uncertain, put content in slack_only_messages.
 `;
 
       const result = await this.analysisAgent.invoke({

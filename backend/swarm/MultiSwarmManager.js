@@ -42,15 +42,17 @@ export class MultiSwarmManager {
     // Create agents using the factory (which injects inter-swarm tools)
     const linearAgent = this.agentFactory.createLinearAgent('project-management');
     const clickupAgent = this.agentFactory.createClickUpAgent('project-management');
+    const notionAgent = this.agentFactory.createNotionAgent('project-management');
+    const jiraAgent = this.agentFactory.createJiraAgent('project-management');
     const slackAgent = this.agentFactory.createSlackAgent('communication');
 
     // Project Management Swarm
     this.createSwarm('project-management', {
       name: 'Project Management Swarm',
-      description: 'Handles project management tasks across Linear and ClickUp',
-      agents: [linearAgent, clickupAgent],
+      description: 'Handles project management tasks across Linear, ClickUp, Notion, and Jira',
+      agents: [linearAgent, clickupAgent, notionAgent, jiraAgent],
       defaultAgent: 'linear_assistant',
-      capabilities: ['issue-management', 'task-creation', 'project-tracking']
+      capabilities: ['issue-management', 'task-creation', 'project-tracking', 'documentation', 'agile-workflow']
     });
 
     // Communication Swarm
@@ -129,6 +131,10 @@ export class MultiSwarmManager {
           capabilities.push('linear-management');
         } else if (tool.name.includes('CLICKUP')) {
           capabilities.push('clickup-management');
+        } else if (tool.name.includes('NOTION')) {
+          capabilities.push('notion-management');
+        } else if (tool.name.includes('JIRA')) {
+          capabilities.push('jira-management');
         } else if (tool.name.includes('SLACK')) {
           capabilities.push('slack-messaging');
         } else if (tool.name.includes('GMAIL')) {
@@ -314,6 +320,7 @@ export class MultiSwarmManager {
     
     // Project management keywords
     if (requestLower.includes('linear') || requestLower.includes('clickup') || 
+        requestLower.includes('notion') || requestLower.includes('jira') ||
         requestLower.includes('issue') || requestLower.includes('task') || 
         requestLower.includes('project') || requestLower.includes('meeting')) {
       return 'project-management';

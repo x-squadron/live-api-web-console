@@ -4,6 +4,7 @@ import { createSwarm } from "@langchain/langgraph-swarm";
 import { HumanMessage } from "@langchain/core/messages";
 import { linearAssistant } from "./agents/linearAgent.js";
 import { clickupAssistant } from "./agents/clickupAgent.js";
+import { notionAssistant } from "./agents/notionAgent.js";
 
 dotenv.config();
 
@@ -18,23 +19,23 @@ export class SwarmManager {
     // Create memory saver for maintaining conversation state
     this.checkpointer = new MemorySaver();
     
-    // Create the swarm with both agents
+    // Create the swarm with all agents
     this.swarm = createSwarm({
-      agents: [linearAssistant, clickupAssistant],
+      agents: [linearAssistant, clickupAssistant, notionAssistant],
       defaultActiveAgent: "linear_assistant", // Start with Linear agent by default
     });
     
     // Compile the swarm with memory
     this.app = this.swarm.compile({ checkpointer: this.checkpointer });
     
-    console.log('[SwarmManager] Swarm initialized with Linear and ClickUp agents');
+    console.log('[SwarmManager] Swarm initialized with Linear, ClickUp, and Notion agents');
   }
 
   /**
    * Get available agent types
    */
   getAvailableAgents() {
-    return ['linear', 'clickup'];
+    return ['linear', 'clickup', 'notion'];
   }
 
   /**
@@ -68,6 +69,21 @@ export class SwarmManager {
           'CLICKUP_CREATE_TASK_COMMENT'
         ],
         description: 'Specialized ClickUp task management agent with handoff capabilities'
+      },
+      notion: {
+        agentType: 'notion',
+        status: 'active',
+        tools: [
+          'NOTION_CREATE_DATABASE',
+          'NOTION_INSERT_ROW_DATABASE',
+          'NOTION_UPDATE_ROW_DATABASE',
+          'NOTION_QUERY_DATABASE',
+          'NOTION_CREATE_NOTION_PAGE',
+          'NOTION_ADD_PAGE_CONTENT',
+          'NOTION_CREATE_COMMENT',
+          'NOTION_SEARCH_NOTION_PAGE'
+        ],
+        description: 'Specialized Notion project management agent with database and documentation capabilities'
       }
     };
 
@@ -177,7 +193,8 @@ export class SwarmManager {
       // Map agent type to internal agent name
       const agentNameMap = {
         linear: 'linear_assistant',
-        clickup: 'clickup_assistant'
+        clickup: 'clickup_assistant',
+        notion: 'notion_assistant'
       };
       
       const agentName = agentNameMap[agentType.toLowerCase()];
@@ -187,7 +204,7 @@ export class SwarmManager {
       
       // Create a new swarm instance starting with the specified agent
       const targetSwarm = createSwarm({
-        agents: [linearAssistant, clickupAssistant],
+        agents: [linearAssistant, clickupAssistant, notionAssistant],
         defaultActiveAgent: agentName,
       });
       

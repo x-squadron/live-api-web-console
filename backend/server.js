@@ -1414,26 +1414,27 @@ app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
     }
 
     // Step 3: Create execution prompt with specific Linear operations from analysis
-    const executionPrompt = `
-EXECUTE THESE SPECIFIC LINEAR OPERATIONS:
+    // Prefer JSON parsing to separate Linear ops from Slack-only info
+    let linearOperations = null;
+    let slackOnlyMessages = [];
+    try {
+      const parsed = JSON.parse(analysisResult.analysis);
+      linearOperations = (parsed.linear_operations || []).filter(op => {
+        if (!op) return false;
+        const opType = op.operation;
+        if (opType === 'create_issue' || opType === 'create_subtask') return true;
+        const conf = typeof op.matching_confidence === 'number' ? op.matching_confidence : 1;
+        return conf >= 0.7;
+      });
+      slackOnlyMessages = parsed.slack_only_messages || [];
+    } catch (e) {
+      // Fallback: if analysis isn't JSON, pass raw content to execution agent
+      console.warn('[MultiSwarmAPI] Analysis was not valid JSON; falling back to raw content');
+    }
 
-MEETING ID: ${finalMeetingId}
-
-ANALYSIS RESULT:
-${analysisResult.analysis}
-
-EXECUTION INSTRUCTIONS:
-Follow the analysis above and execute the specified Linear operations precisely. 
-Do NOT make decisions - only execute what is specified in the analysis.
-Create, update, or comment on issues exactly as described in the analysis.
-
-Remember to:
-1. Always assign assignees to new issues
-2. Use proper priority levels (0-4)
-3. Create subtasks with parent_id when specified
-4. Include meeting context in descriptions
-5. Notify the communication swarm when complete
-`;
+    const executionPrompt = linearOperations
+      ? `You will receive a JSON array of Linear operations to execute. Follow EXACTLY and map desired_state_name/state_category to state_id via LINEAR_LIST_LINEAR_STATES. Only update/comment existing issues if matching_confidence >= 0.7. Here are the operations:\n\n${JSON.stringify(linearOperations, null, 2)}`
+      : `EXECUTE THESE SPECIFIC LINEAR OPERATIONS BASED ON ANALYSIS (raw):\n\n${analysisResult.analysis}`;
 
     // Step 4: Send to project management swarm for execution
     const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, finalUserId);
@@ -1920,6 +1921,17 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
       });
     }
 
+    // Extract Slack-only messages (if analysis returned JSON)
+    let slackOnlyMessages = [];
+    try {
+      const parsed = JSON.parse(analysisResult.analysis);
+      if (parsed && Array.isArray(parsed.slack_only_messages)) {
+        slackOnlyMessages = parsed.slack_only_messages;
+      }
+    } catch (e) {
+      console.warn('[MultiSwarmAPI] Analysis not valid JSON; skipping slack_only_messages extraction');
+    }
+
     // Step 3: Create execution prompt with specific Linear operations from analysis
     const executionPrompt = `
 EXECUTE THESE SPECIFIC LINEAR OPERATIONS:
@@ -1945,6 +1957,26 @@ Remember to:
     // Step 4: Send to project management swarm for execution
     const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, finalUserId);
     
+    // Step 5: If analysis contained Slack-only messages, notify communication swarm
+    let slackDispatch = null;
+    if (finalEnableNotifications && slackOnlyMessages && slackOnlyMessages.length > 0) {
+      const slackMessage = `Non-actionable meeting notes to share with the team (no Linear changes needed):\n\n${slackOnlyMessages.map((m, i) => `${i + 1}. ${m}`).join('\n')}`;
+      try {
+        slackDispatch = await multiSwarmManager.communicateBetweenSwarms(
+          'project-management',
+          'communication',
+          slackMessage,
+          {
+            source: 'process-transcript-workflow',
+            meetingId: finalMeetingId,
+            defaultChannel: 'C07LW6LP6ET'
+          }
+        );
+      } catch (e) {
+        console.warn('[MultiSwarmAPI] Failed to send Slack-only messages:', e.message);
+      }
+    }
+
     if (swarmResult.success) {
       console.log(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Success | meetingId: ${finalMeetingId} | agentType: ${finalAgentType} | Duration: ${Date.now() - startTime}ms`);
       res.json({
@@ -1958,6 +1990,7 @@ Remember to:
           actionItemsError: summaryResult.actionItemsError
         },
         swarmResult: swarmResult,
+        slackOnlyDispatch: slackDispatch,
         notification: finalEnableNotifications ? {
           enabled: true,
           result: null // No direct notification result here, handled by swarm

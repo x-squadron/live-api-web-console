@@ -19,8 +19,8 @@ class MeetingSummarizer {
     }
 
     this.llm = new ChatOpenAI({
-      modelName: 'gpt-4o-mini',
-      temperature: 0.1,
+      modelName: 'gpt-5-mini-2025-08-07',
+      temperature: 1,
       openAIApiKey: process.env.OPENAI_API_KEY
     });
   }
@@ -84,8 +84,8 @@ class LinearMeetingAgent {
     }
 
     this.llm = new ChatOpenAI({
-      modelName: 'gpt-4o-mini',
-      temperature: 0.1,
+      modelName: 'gpt-5-mini-2025-08-07',
+      temperature: 1,
       openAIApiKey: process.env.OPENAI_API_KEY
     });
 

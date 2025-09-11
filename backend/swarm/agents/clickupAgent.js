@@ -18,8 +18,8 @@ const transferToLinearAssistant = createHandoffTool({
 // Create the ClickUp assistant agent using createReactAgent
 export const clickupAssistant = createReactAgent({
   llm: new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0.1,
+    model: "gpt-5-mini-2025-08-07",
+    temperature: 1,
   }),
   tools: [...clickupTools, transferToLinearAssistant, ...interSwarmTools],
   prompt: `You are an autonomous ClickUp specialist agent in a multi-agent swarm system.

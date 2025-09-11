@@ -1,7 +1,11 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { linearGetIssues } from './tools/composioTools.js';
+import { 
+  linearGetIssues,
+  slackSendMessage
+} from './tools/composioTools.js';
 import dotenv from 'dotenv';
+import logger from '../utils/logger.js';
 
 dotenv.config();
 
@@ -16,15 +20,18 @@ export class MeetingSummarizer {
     }
 
     this.llm = new ChatOpenAI({
-      modelName: 'gpt-4o-mini',
-      temperature: 0.1,
+      modelName: 'gpt-5-mini-2025-08-07',
+      temperature: 1,
       openAIApiKey: process.env.OPENAI_API_KEY
     });
 
-    // Create analysis agent with LINEAR_LIST_LINEAR_ISSUES tool
+    // Create analysis agent: READ-ONLY for Linear (context) + Slack send for FYI
     this.analysisAgent = createReactAgent({
       llm: this.llm,
-      tools: [linearGetIssues],
+      tools: [
+        linearGetIssues,
+        slackSendMessage
+      ],
       prompt: this.generateAnalysisPrompt(),
       name: "action_analysis_agent",
     });
@@ -34,83 +41,73 @@ export class MeetingSummarizer {
    * Generate prompt for the analysis agent
    */
   generateAnalysisPrompt() {
-    return `You are an Action Analysis Agent that analyzes meeting action items and provides complete execution instructions.
+    return `You are an INTELLIGENT Action Analysis Agent that produces a PLAN ONLY for Linear (no Linear execution). Your job is to analyze meeting action items and generate a precise JSON plan for the project-management swarm to execute later.
 
-Your task:
-1. Use LINEAR_LIST_LINEAR_ISSUES to check existing Linear issues
-2. Analyze the action items against existing issues
-3. Provide specific execution instructions for the Linear execution agent
+CRITICAL:
+- Do NOT perform any Linear write operations.
+- You MAY send Slack FYI messages directly to inform the team (default channel: D07T5M9JW6N).
+- Otherwise, return ONLY a JSON plan for Linear actions.
 
-Available Tools:
-- LINEAR_LIST_LINEAR_ISSUES: List existing Linear issues in the workspace
+ALLOWED TOOLS:
+- LINEAR_LIST_LINEAR_ISSUES (READ-ONLY): List existing Linear issues (for matching and deduplication)
+- SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL: Send FYI/announcement messages to Slack (use default channel D07T5M9JW6N when not specified)
 
-SMART ISSUE MANAGEMENT STRATEGY:
-- DO NOT always create new issues for everything
-- FIRST check if an existing issue can be updated or commented on
-- Use SUBTASKS for related work that fits under existing issues
-- Use COMMENTS for updates, progress notes, or additional context
-- Only create NEW ISSUES when:
-  * It's a completely new, unrelated topic
-  * It's a major new feature or bug that doesn't fit existing issues
-  * It's a high-priority item that needs separate tracking
+MANDATORY STEPS (in a sensible order based on available data):
+1. List existing issues for matching against action items.
+2. Analyze action items against existing issues and decide: update existing, add comment, or create new.
+3. Produce a PLAN (JSON) with fields needed by executors. If a status change is implied, specify desired_state_name or state_category (the executor will map to state_id).
+4. For any FYI-only notes (no Linear change needed), send a concise Slack message to D07T5M9JW6N summarizing those points.
 
-STATE SELECTION RULES:
-- Always recommend a desired state for each operation when relevant (e.g., "In Progress", "Todo", "Backlog", "Done", "Canceled", "Blocked")
-- Prefer "In Progress" when someone is assigned to start working now
-- Prefer "Todo" for near-term planned work
-- Avoid defaulting to "Backlog" unless explicitly discussed as deferred
-- If the workspace uses different state names, provide the best matching generic category (todo | in_progress | done | canceled | blocked)
-
-STRICT MATCHING RULES (to avoid wrong updates/comments):
-- Compute a matching confidence (0–1) for linking an action item to an existing issue, based on title/topic similarity, project/component, assignee, labels, and any explicit issue IDs mentioned
-- Only UPDATE or COMMENT on an existing issue if matching_confidence ≥ 0.7
-- If confidence < 0.7, do NOT update/comment that issue; either create a subtask under a clearly-related parent (if appropriate) or classify as slack_only_information
-
-CLASSIFICATION:
-- Classify items into exactly one of:
-  1) linear_operations (create/update/comment/subtask)
-  2) slack_only_messages (informational notes that should be shared via Slack but NOT added to Linear)
-  3) ignore_items (not actionable)
-
-Instructions:
-1. First, call LINEAR_LIST_LINEAR_ISSUES to get current issues
-2. Analyze the action items against existing issues to determine:
-   - Which existing issues should be UPDATED (with issue IDs)
-   - Which existing issues should have COMMENTS added (with issue IDs and comment content)
-   - Which existing issues should have SUBTASKS created (with parent issue IDs)
-   - Which NEW issues should be created (only if truly new/unrelated topics)
-   - Which items are slack_only_messages (share to Slack only, not Linear)
-3. Provide detailed execution instructions including:
-   - Specific issue IDs for updates and comments
-   - Parent issue IDs and subtask details for subtasks
-   - Complete details for new issues (title, description, assignee, priority) - only when necessary
-   - desired_state_name and/or state_category for each operation that creates/updates an issue
-   - matching_confidence (0–1) and matching_reason for any operation that references an existing issue
-
-PRIORITY ORDER:
-1. Update existing issues (status/state, assignee, priority, description)
-2. Add comments to existing issues (progress updates, context, notes)
-3. Create subtasks under existing issues (related work, smaller tasks)
-4. Create new issues (only for truly new/unrelated topics)
+RULES:
+- Do NOT execute or simulate writes. You are planning only.
+- Prefer updating existing issues when match confidence ≥ 0.6; otherwise plan new issue creation.
+- Include clear reasons and confidence scores for matches and changes.
+- You SHOULD send FYI-only Slack notifications directly to D07T5M9JW6N to keep the team informed.
+  When calling the Slack tool, STRICTLY use these parameters only:
+    channel: "D07T5M9JW6N" (unless a different channel is explicitly specified)
+    text: string (the message to send)
+  Do NOT include attachments or blocks.
 
 OUTPUT FORMAT (return ONLY a JSON object, no prose):
 {
   "linear_operations": [
     {
-      "operation": "update_issue" | "add_comment" | "create_subtask" | "create_issue",
-      "issue_id": "ID-if-update-or-comment",
-      "parent_issue_id": "ID-if-subtask",
-      "new_issue": { "title": "...", "description": "...", "assignee": "name or id", "priority": 0-4 },
-      "comment": "comment text if add_comment",
-      "desired_state_name": "In Progress | Todo | Backlog | Done | Canceled | Blocked",
-      "state_category": "in_progress | todo | backlog | done | canceled | blocked",
-      "matching_confidence": 0.0,
-      "matching_reason": "why this matches the referenced issue"
+      "operation": "update_issue" | "add_comment" | "create_issue",
+      "issue_id": "string (REQUIRED for updates/comments)",
+      "title": "string (REQUIRED for new issues)",
+      "description": "string",
+      "assignee": "string",
+      "priority": "High" | "Medium" | "Low",
+      "desired_state_name": "string (e.g., 'Todo', 'In Progress', 'Done')",
+      "state_category": "string (e.g., 'todo' | 'in_progress' | 'done')",
+      "comment": "string (REQUIRED for add_comment)",
+      "matching_confidence": "number (0-1)",
+      "matching_reason": "string",
+      "status_change_reason": "string",
+      "assignee_change_reason": "string"
     }
   ],
-  "slack_only_messages": ["..."],
-  "ignore_items": ["..."]
-}`;
+  "slack_messages": [
+    {
+      "channel": "string (defaults to D07T5M9JW6N)",
+      "message": "string (informational updates only)",
+      "type": "notification" | "update" | "announcement",
+      "reason": "string"
+    }
+  ],
+  "ignore_items": [
+    {
+      "reason": "string",
+      "original_text": "string"
+    }
+  ]
+}
+
+CRITICAL REQUIREMENTS:
+- Do NOT perform any create/update/delete operations yourself.
+- Use only the allowed read-only tool for Linear discovery.
+- Provide issue_id for all update_issue and add_comment plans.
+- Focus ONLY on Linear-related planning (no ClickUp or other platforms).`;
   }
 
   /**
@@ -119,21 +116,39 @@ OUTPUT FORMAT (return ONLY a JSON object, no prose):
   async analyzeActionItemsWithContext(actionItems, meetingId) {
     try {
       console.log(`[MeetingSummarizer] Analyzing action items with Linear context (meetingId: ${meetingId})`);
+      logger.logMeetingProcessing('analysis_started', 'Analyzing action items with Linear context', { meetingId });
       
       const analysisPrompt = `
-Analyze these action items and produce ONLY a JSON object following the OUTPUT FORMAT in your system prompt.
+CRITICAL: You MUST follow the step-by-step process in your system prompt.
 
-ACTION ITEMS:
+ACTION ITEMS TO ANALYZE:
 ${actionItems}
 
 MEETING ID: ${meetingId}
 
-Requirements:
-1. First, call LINEAR_LIST_LINEAR_ISSUES to gather context
-2. Classify items into linear_operations, slack_only_messages, ignore_items
-3. For linear_operations, include desired_state_name/state_category and matching_confidence/matching_reason when referencing existing issues
-4. Avoid defaulting to Backlog; recommend appropriate states
-5. Return ONLY JSON (no prose). If uncertain, put content in slack_only_messages.
+⚠️ CRITICAL WARNING: You MUST call LINEAR_GET_LINEAR_STATES after LINEAR_GET_LINEAR_ISSUES to get state IDs. If you use state names like "Todo" instead of state IDs, ALL operations will fail!
+
+REQUIRED STEPS:
+1. FIRST: Call LINEAR_GET_LINEAR_ISSUES to get current Linear issues
+2. If Linear connection fails (fallback response), proceed with creating new Linear tickets
+3. Analyze each action item against the existing Linear issues (if available)
+4. Make intelligent decisions about updates vs new Linear tickets vs Slack messages
+5. Provide specific instructions with Linear issue IDs, state IDs (not names), and comments
+
+IMPORTANT:
+- ALWAYS call LINEAR_GET_LINEAR_ISSUES first
+- ALWAYS call LINEAR_GET_LINEAR_STATES second to get state IDs
+- Use actual Linear state IDs (like "a6eddfb0-4d5b-4e62-a8d4-c5342233fa80"), not state names (like "Todo")
+- If Linear connection fails, create new Linear tickets for actionable items
+- Look for status updates in the action items (e.g., "this is done", "we're working on this")
+- Look for assignee changes and priority changes
+- Send informational items to Slack, not as Linear tickets
+- Only create new Linear tickets for truly new/unrelated topics
+- Provide issue_id for ALL update_issue and add_comment operations (if Linear connection available)
+- Explain matching_confidence and matching_reason for existing Linear issues
+- Focus ONLY on Linear operations, not ClickUp or other platforms
+
+Return ONLY a JSON object following the OUTPUT FORMAT in your system prompt.
 `;
 
       const result = await this.analysisAgent.invoke({
@@ -141,12 +156,24 @@ Requirements:
       });
 
       console.log('[MeetingSummarizer] Analysis completed successfully');
+      
+      // Log full analysis result to file
+      logger.logMeetingProcessing('analysis_completed', 'Analysis completed successfully', { 
+        meetingId,
+        fullAnalysisResult: result.messages[result.messages.length - 1].content,
+        actionItemsLength: actionItems.length
+      });
+      
       return {
         success: true,
         analysis: result.messages[result.messages.length - 1].content
       };
     } catch (error) {
       console.error(`[MeetingSummarizer] Error analyzing action items with context (meetingId: ${meetingId}):`, error);
+      logger.logMeetingProcessing('analysis_error', 'Error analyzing action items', { 
+        meetingId, 
+        error: error.message 
+      });
       return {
         success: false,
         error: error.message
@@ -191,10 +218,24 @@ Requirements:
   async createMeetingSummary(transcript) {
     try {
       const formattedTranscript = this.formatTranscriptSegments(transcript);
-      console.log(`[MeetingSummarizer] Creating meeting summary for transcript (length: ${formattedTranscript.length}):`, formattedTranscript.length > 500 ? formattedTranscript.slice(0, 500) + '...[truncated]' : formattedTranscript);
+      
+      // Log full transcript to file, truncated to console
+      console.log(`[MeetingSummarizer] Creating meeting summary for transcript (length: ${formattedTranscript.length})`);
+      logger.logMeetingProcessing('transcript_processing', 'Creating meeting summary', { 
+        transcriptLength: formattedTranscript.length,
+        fullTranscript: formattedTranscript 
+      });
+      
       const prompt = `You are an expert assistant tasked with generating a clear, structured, and professional summary of a technical meeting from a transcript.\nYour mission is to produce a summary that matches the style used by the team. The expected format contains four distinct sections:\n\n**1. Key takeaways**\nList the key lessons from the meeting in English, in clear and concise paragraphs. Each paragraph should summarize a central idea, including the names of the people involved, their roles, and the objectives discussed. Maintain a professional and analytical tone. If the meeting is technical, mention tools, bugs, APIs, workflows, or proposed solutions.\n\n**2. Action items**\nList concrete actions assigned to each participant, as bullet points, starting each item with the full name of the person concerned. Use infinitive verbs to formulate the action.\n\n**3. Small talk**\nIndicate "None" if no informal exchanges took place. Otherwise, briefly summarize non-technical discussions.\n\n**4. Summary**\nWrite a summary structured by theme. Structure it with clear headings (for example: "Local Deployment", "Event-Driven Architecture", "Technical Issues", "Transcription Management", etc.), followed by timestamped points if available (for example, 2:17). Use an informative and precise tone. Mention decisions made, problems identified, solutions proposed, and next steps. The summary should reflect the full richness of the meeting.\n\n---\n\nDo not start responding until you have fully understood the entire transcript provided. If the transcript contains errors or inconsistencies, correct them in the summary.\nYou must ALWAYS respect the above format.\n\nMEETING TRANSCRIPT:\n${formattedTranscript}`;
       const result = await this.llm.invoke(prompt);
-      console.log('[MeetingSummarizer] Summary generated successfully (length:', result.content.length, '):', result.content.length > 500 ? result.content.slice(0, 500) + '...[truncated]' : result.content);
+      
+      // Log full summary to file, truncated to console
+      console.log('[MeetingSummarizer] Summary generated successfully (length:', result.content.length, ')');
+      logger.logMeetingProcessing('summary_generated', 'Summary generated successfully', { 
+        summaryLength: result.content.length,
+        fullSummary: result.content 
+      });
+      
       return {
         success: true,
         summary: result.content,
@@ -202,6 +243,7 @@ Requirements:
       };
     } catch (error) {
       console.error('[MeetingSummarizer] Error creating summary:', error);
+      logger.logMeetingProcessing('summary_error', 'Error creating summary', { error: error.message });
       return {
         success: false,
         error: error.message,
@@ -215,16 +257,35 @@ Requirements:
    */
   async extractActionItems(summary, meetingId) {
     try {
-      console.log(`[MeetingSummarizer] Extracting action items from summary (meetingId: ${meetingId}, length: ${summary.length}):`, summary.length > 500 ? summary.slice(0, 500) + '...[truncated]' : summary);
+      // Log full summary to file, truncated to console
+      console.log(`[MeetingSummarizer] Extracting action items from summary (meetingId: ${meetingId}, length: ${summary.length})`);
+      logger.logMeetingProcessing('action_items_extraction', 'Extracting action items from summary', { 
+        meetingId,
+        summaryLength: summary.length,
+        fullSummary: summary 
+      });
+      
       const prompt = `Analyze this meeting summary and extract specific, actionable items that should be created as tasks or issues in project management tools.\n\nMEETING SUMMARY:\n${summary}\n\nMEETING ID: ${meetingId}\n\nPlease extract:\n1. **Specific Action Items**: Concrete tasks that need to be completed\n2. **Bug Reports**: Issues or bugs that were identified and need fixing\n3. **Feature Requests**: New features or improvements that were discussed\n4. **Follow-up Tasks**: Items that require follow-up or investigation\n\nFor each item, provide:\n- **Title**: Clear, concise title for the task/issue\n- **Description**: Detailed description including context from the meeting\n- **Priority**: Estimated priority based on the discussion (High, Medium, Low)\n- **Type**: Whether it's a task, bug, feature, or follow-up\n- **Assignee**: If mentioned in the meeting\n- **Due Date**: If mentioned or can be inferred\n\nFormat your response as a structured list that can be easily processed by project management tools.`;
       const result = await this.llm.invoke(prompt);
-      console.log('[MeetingSummarizer] Action items extracted successfully (length:', result.content.length, '):', result.content.length > 500 ? result.content.slice(0, 500) + '...[truncated]' : result.content);
+      
+      // Log full action items to file, truncated to console
+      console.log('[MeetingSummarizer] Action items extracted successfully (length:', result.content.length, ')');
+      logger.logMeetingProcessing('action_items_extracted', 'Action items extracted successfully', { 
+        meetingId,
+        actionItemsLength: result.content.length,
+        fullActionItems: result.content 
+      });
+      
       return {
         success: true,
         actionItems: result.content
       };
     } catch (error) {
       console.error(`[MeetingSummarizer] Error extracting action items (meetingId: ${meetingId}):`, error);
+      logger.logMeetingProcessing('action_items_error', 'Error extracting action items', { 
+        meetingId, 
+        error: error.message 
+      });
       return {
         success: false,
         error: error.message

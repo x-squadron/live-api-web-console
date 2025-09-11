@@ -12,6 +12,31 @@ const composioToolset = new OpenAIToolSet({
 
 const userId = process.env.COMPOSIO_ENTITY_ID || 'default_user';
 
+// Test Linear connection on startup
+async function testLinearConnection() {
+  try {
+    console.log('[ComposioTool] Testing Linear connection...');
+    // Use the same format as executeComposioTool
+    const toolCall = {
+      id: `test_${Date.now()}`,
+      type: 'function',
+      function: {
+        name: 'LINEAR_LIST_LINEAR_ISSUES',
+        arguments: JSON.stringify({ limit: 1 })
+      }
+    };
+    const testResult = await composioToolset.executeToolCall(toolCall, userId);
+    console.log('[ComposioTool] Linear connection test successful:', testResult ? 'Yes' : 'No');
+    return true;
+  } catch (error) {
+    console.log('[ComposioTool] Linear connection test failed:', error.message || error);
+    return false;
+  }
+}
+
+// Test connection on module load
+testLinearConnection();
+
 // Helper function to execute Composio tool
 async function executeComposioTool(toolName, args) {
   try {
@@ -31,14 +56,54 @@ async function executeComposioTool(toolName, args) {
     
     return result;
   } catch (error) {
-    console.error(`[ComposioTool] Error executing ${toolName}:`, error);
+    console.error(`[ComposioTool] Error executing ${toolName}:`, {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      cause: error.cause
+    });
+    
+    // Provide fallback for Linear tools when connection fails
+    if (toolName === 'LINEAR_LIST_LINEAR_ISSUES') {
+      console.log(`[ComposioTool] Providing fallback for ${toolName} - Linear connection issue detected`);
+      return {
+        success: false,
+        error: error.message || "Linear connection not available",
+        message: "Linear connection issue detected. Proceeding with fallback mode.",
+        fallback: true,
+        issues: [],
+        originalError: error.message
+      };
+    }
+    
     throw error;
   }
 }
 
 // Linear Tools
 export const linearGetIssues = tool(
-  async (args) => executeComposioTool('LINEAR_LIST_LINEAR_ISSUES', args),
+  async (args) => {
+    try {
+      // Try with minimal parameters first
+      const minimalArgs = args.limit ? { limit: args.limit } : {};
+      return await executeComposioTool('LINEAR_LIST_LINEAR_ISSUES', minimalArgs);
+    } catch (error) {
+      console.log(`[ComposioTool] LINEAR_LIST_LINEAR_ISSUES failed, trying alternative approach`);
+      // Try alternative Linear tool name
+      try {
+        return await executeComposioTool('LINEAR_GET_LINEAR_ISSUES', args);
+      } catch (altError) {
+        console.log(`[ComposioTool] Alternative Linear tool also failed, using fallback`);
+        return {
+          success: false,
+          error: "Linear connection not available",
+          message: "Linear connection issue detected. Proceeding with fallback mode.",
+          fallback: true,
+          issues: []
+        };
+      }
+    }
+  },
   {
     name: "LINEAR_LIST_LINEAR_ISSUES",
     description: "Retrieve Linear issues with filtering and search capabilities",
@@ -282,15 +347,59 @@ export const linearTools = [
 
 // Slack Tools
 export const slackSendMessage = tool(
-  async (args) => executeComposioTool('SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL', args),
+  async (args) => {
+    const normalized = { ...args };
+
+    // Default channel if not specified
+    if (!normalized.channel || typeof normalized.channel !== 'string' || normalized.channel.trim() === '') {
+      normalized.channel = 'D07T5M9JW6N';
+    }
+
+    // Ensure text is a string
+    if (typeof normalized.text !== 'string') {
+      normalized.text = String(normalized.text ?? '');
+    }
+
+    // Normalize attachments to string or remove if empty
+    if (typeof normalized.attachments !== 'undefined') {
+      if (Array.isArray(normalized.attachments)) {
+        if (normalized.attachments.length === 0) {
+          delete normalized.attachments;
+        } else {
+          try { normalized.attachments = JSON.stringify(normalized.attachments); } catch { delete normalized.attachments; }
+        }
+      } else if (normalized.attachments && typeof normalized.attachments === 'object') {
+        try { normalized.attachments = JSON.stringify([normalized.attachments]); } catch { delete normalized.attachments; }
+      } else if (typeof normalized.attachments !== 'string') {
+        delete normalized.attachments;
+      }
+    }
+
+    // Normalize blocks similarly
+    if (typeof normalized.blocks !== 'undefined') {
+      if (Array.isArray(normalized.blocks)) {
+        if (normalized.blocks.length === 0) {
+          delete normalized.blocks;
+        } else {
+          try { normalized.blocks = JSON.stringify(normalized.blocks); } catch { delete normalized.blocks; }
+        }
+      } else if (normalized.blocks && typeof normalized.blocks === 'object') {
+        try { normalized.blocks = JSON.stringify([normalized.blocks]); } catch { delete normalized.blocks; }
+      } else if (typeof normalized.blocks !== 'string') {
+        delete normalized.blocks;
+      }
+    }
+
+    return executeComposioTool('SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL', normalized);
+  },
   {
     name: "SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL",
     description: "Send a message to a Slack channel",
     schema: z.object({
-      channel: z.string().describe("Channel ID or channel name to send the message to"),
+      channel: z.string().optional().describe("Channel ID or name; defaults to D07T5M9JW6N"),
       text: z.string().describe("Message text to send"),
-      attachments: z.array(z.object({})).optional().describe("Optional message attachments"),
-      blocks: z.array(z.object({})).optional().describe("Optional message blocks for rich formatting"),
+      attachments: z.union([z.string(), z.array(z.object({})).optional()]).optional().describe("Optional attachments (array or JSON string)"),
+      blocks: z.union([z.string(), z.array(z.object({})).optional()]).optional().describe("Optional blocks (array or JSON string)"),
     }),
   }
 );

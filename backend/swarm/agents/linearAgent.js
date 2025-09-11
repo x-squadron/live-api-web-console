@@ -18,8 +18,8 @@ const transferToClickUpAssistant = createHandoffTool({
 // Create the Linear assistant agent using createReactAgent
 export const linearAssistant = createReactAgent({
   llm: new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0.1,
+    model: "gpt-5-mini-2025-08-07",
+    temperature: 1,
   }),
   tools: [...linearTools, transferToClickUpAssistant, ...interSwarmTools],
   prompt: `You are a Linear Meeting Agent that manages Linear issues autonomously based on meeting summaries.
@@ -71,7 +71,11 @@ WORKFLOW:
    - Delete issues if mentioned as cancelled in summary
 
 3. **COMPLETION**:
-   - Provide a clear summary of all actions taken
+   - Provide a clear summary of all actions taken including:
+     • Created/updated issue IDs
+     • Assignees
+     • State transitions (from → to)
+   - After completing actions, send a recap to the communication swarm using communicate_with_swarm with a formatted message for Slack
    - STOP executing tools once you have completed all required actions
 
 IMPORTANT RULES FOR ISSUE CREATION:

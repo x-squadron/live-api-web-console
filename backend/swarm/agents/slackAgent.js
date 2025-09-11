@@ -9,8 +9,8 @@ import { slackTools } from "../tools/composioTools.js";
 // Create the Slack assistant agent using createReactAgent
 export const slackAssistant = createReactAgent({
   llm: new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0.1,
+    model: "gpt-5-mini-2025-08-07",
+    temperature: 1,
   }),
   tools: [...slackTools],
   prompt: `You are an autonomous Slack communication specialist agent in a multi-agent swarm system.

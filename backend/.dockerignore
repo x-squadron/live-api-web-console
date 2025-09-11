@@ -1,0 +1,35 @@
+# Exclude dependencies installed locally; install inside the image via `npm ci`
+node_modules
+
+# Do not ship local logs; app should log to stdout/stderr in containers
+logs
+*.log
+npm-debug.log*
+
+# Env files and local-only artifacts
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# Tests/demos (none currently, but keep pattern future-proof)
+test-*.js
+tests/
+__tests__/
+
+# VCS and editor files
+.git
+.gitignore
+.gitattributes
+.vscode
+.idea
+
+# Coverage, caches, and temp files
+coverage/
+.nyc_output/
+.turbo/
+.cache/
+tmp/
+dist/
+build/
+

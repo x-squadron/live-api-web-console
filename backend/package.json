@@ -19,6 +19,7 @@
     "@langchain/langgraph": "^0.3.4",
     "@langchain/langgraph-swarm": "^0.0.4",
     "@langchain/openai": "^0.5.13",
+    "@upstash/qstash": "^2.8.2",
     "composio-core": "^0.5.39",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",

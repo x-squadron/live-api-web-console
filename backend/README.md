@@ -51,6 +51,41 @@ npm run test:swarm
 
 The server will start on `http://localhost:3001` (or the port specified in your `.env`).
 
+## 🐳 Docker
+
+### 1) Create `.env`
+Create `backend/.env` with the variables your server expects:
+
+```bash
+PORT=3001
+OPENAI_API_KEY=your_openai_key
+COMPOSIO_API_KEY=your_composio_key
+COMPOSIO_ENTITY_ID=default_user
+```
+
+### 2) Build and run
+
+```bash
+cd backend
+docker compose up -d --build
+```
+
+The container exposes port `3001` by default (overridable via `PORT`).
+
+### 3) Verify health and logs
+
+```bash
+curl http://localhost:3001/health
+# On Windows PowerShell
+Get-ChildItem .\logs
+Get-Content .\logs\backend-$(Get-Date -Format yyyy-MM-dd).log -Tail 50 -Wait
+```
+
+Notes:
+- Logs are persisted via `./logs:/app/logs` bind mount (see `docker-compose.yml`).
+- Build context excludes `logs` and `node_modules` via `.dockerignore`; dependencies install in-image using `npm ci`.
+- Healthcheck is configured to hit `GET /health` inside the container.
+
 ## 🏗️ Architecture Overview
 
 The backend consists of two main components:
@@ -94,7 +129,13 @@ The swarm system is the heart of the backend, managing multiple AI agents that w
 - Processes meeting transcripts into structured summaries
 - Generates action items and key takeaways
 - Formats transcripts for agent consumption
-- Provides analysis prompts for action item processing
+- **Intelligent multi-platform analysis agent** that:
+  - First checks existing Linear issues before making decisions
+  - Updates existing tickets with status changes, assignee changes, and comments
+  - Only creates new tickets for truly new/unrelated topics
+  - Sends informational updates to Slack instead of creating tickets
+  - Detects status updates from meeting discussions ("this is done", "we're working on this")
+  - Provides matching confidence scores for existing ticket updates
 
 ### Agent Types (`/swarm/agents/`)
 
@@ -177,6 +218,11 @@ The swarm system is the heart of the backend, managing multiple AI agents that w
 - `GET /api/multi-swarm/communications` - Get communication history
 - `DELETE /api/multi-swarm/swarms/:swarmId` - Destroy a swarm
 
+### Log Management
+- `GET /api/logs` - List all available log files
+- `GET /api/logs/:filename` - Get content of specific log file
+- `POST /api/logs/clean` - Clean old log files (keep last 30 days)
+
 ### Linear Integration
 - `GET /api/linear/issues` - List Linear issues
 - `GET /api/linear/teams` - List Linear teams
@@ -187,7 +233,12 @@ The swarm system is the heart of the backend, managing multiple AI agents that w
 ### Meeting Transcript Processing
 1. **Upload Transcript**: Send transcript to `/api/multi-swarm/process-transcript-workflow`
 2. **Summary Generation**: MeetingSummarizer creates structured summary
-3. **Action Item Analysis**: Analysis agent identifies actionable items
+3. **Intelligent Action Analysis**: Analysis agent:
+   - First checks existing Linear issues using LINEAR_GET_LINEAR_ISSUES
+   - Updates existing tickets with status changes, assignee changes, and comments
+   - Only creates new tickets for truly new/unrelated topics
+   - Sends informational updates to Slack instead of creating tickets
+   - Detects status updates from meeting discussions
 4. **Task Creation**: Appropriate agents create/update tasks in respective systems
 5. **Communication**: Slack agent sends notifications and updates
 
@@ -203,8 +254,8 @@ The swarm system is the heart of the backend, managing multiple AI agents that w
 ## 🔧 Configuration
 
 ### Agent Configuration
-- **Model**: GPT-4o-mini (configurable via environment)
-- **Temperature**: 0.1 (low randomness for consistent results)
+- **Model**: gpt-5-mini-2025-08-07 (configurable via environment)
+- **Temperature**: 1 (low randomness for consistent results)
 - **Memory**: Persistent memory with MemorySaver
 - **Tools**: Dynamic tool loading based on agent type
 
@@ -219,8 +270,10 @@ The swarm system is the heart of the backend, managing multiple AI agents that w
 **Note**: Only the following files are currently pushed to the repository:
 - `server.js` - Main server file
 - `/swarm/` folder - Complete swarm system implementation
+- `/utils/logger.js` - Advanced logging system
 - `package.json` - Dependencies and scripts
 - `.env` - Environment configuration (create this file)
+- `/logs/` folder - Daily log files (created automatically)
 
 Other components like test files, documentation, and additional utilities are not included in the current repository.
 
@@ -263,6 +316,17 @@ LOG_LEVEL=debug
 - All operations are logged with timestamps
 - Agent creation, destruction, and task execution are tracked
 - Error logs include stack traces and context
+- **Daily log files** saved to `backend/logs/` folder
+- **Non-truncated output** with full JSON data
+- **API request/response logging** with full details
+- **Automatic log rotation** (30-day retention)
+
+### Log File Structure
+- **Daily files**: `backend-YYYY-MM-DD.log`
+- **Full timestamps**: ISO format for precise timing
+- **Structured data**: JSON objects preserved in full
+- **Separator lines**: 80-character dashes between entries
+- **Log levels**: INFO, ERROR, WARN, DEBUG, SYSTEM, API_REQUEST, API_RESPONSE, AGENT, SWARM, MEETING
 
 ### Metrics
 - Agent count and status

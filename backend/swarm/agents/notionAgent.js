@@ -28,8 +28,8 @@ const transferToClickUpAssistant = createHandoffTool({
 // Create the Notion assistant agent using createReactAgent
 export const notionAssistant = createReactAgent({
   llm: new ChatOpenAI({
-    model: "gpt-4o-mini",
-    temperature: 0.1,
+    model: "gpt-5-mini-2025-08-07",
+    temperature: 1,
   }),
   tools: [...notionTools, transferToLinearAssistant, transferToClickUpAssistant, ...interSwarmTools],
   prompt: `You are a Notion Project Management Agent that manages Notion databases, pages, and project documentation autonomously.

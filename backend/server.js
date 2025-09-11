@@ -18,26 +18,33 @@ import { z } from 'zod';
 import { createLinearAgent, runLinearMeetingAgent } from './LinearMeetingAgent.js';
 import { SwarmManager, MeetingSummarizer } from './swarm/index.js';
 import { MultiSwarmManager, AgentFactory } from './swarm/index.js';
+import logger from './utils/logger.js';
+import { Client as QStashClient, Receiver as QStashReceiver } from '@upstash/qstash';
 
 console.log('🔄 Starting A2A Backend Server with LangChain React Agents...');
+logger.logSystemEvent('Server startup initiated');
 
 // Load environment variables
 dotenv.config();
 console.log('✅ Environment variables loaded');
+logger.logSystemEvent('Environment variables loaded');
 
 // Configure logging
 configureLogger({ level: 'info' });
 console.log('✅ Artinet SDK logger configured');
+logger.logSystemEvent('Artinet SDK logger configured');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 console.log(`✅ Express app created, will use port ${PORT}`);
+logger.logSystemEvent(`Express app created on port ${PORT}`);
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 console.log('✅ Middleware configured');
+logger.logSystemEvent('Middleware configured');
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -52,6 +59,111 @@ const upload = multer({
   }
 });
 console.log('✅ File upload middleware configured');
+logger.logSystemEvent('File upload middleware configured');
+
+// QStash setup (optional if env vars present)
+const qstash = (process.env.QSTASH_TOKEN && process.env.QSTASH_URL)
+  ? new QStashClient({
+      token: process.env.QSTASH_TOKEN,
+      url: process.env.QSTASH_URL
+    })
+  : null;
+
+const qstashReceiver = (process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_NEXT_SIGNING_KEY)
+  ? new QStashReceiver({
+      currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY,
+      nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY
+    })
+  : null;
+
+// Helper to enqueue to a named QStash queue (visible in Console → Queues)
+async function enqueueToQstashQueue(queueName, targetUrl, body, dedupId) {
+  const baseUrl = process.env.QSTASH_URL || 'https://qstash.upstash.io';
+  // Do NOT encode targetUrl, QStash expects a plain absolute URL with scheme
+  const enqueueUrl = `${baseUrl}/v2/enqueue/${encodeURIComponent(queueName)}/${targetUrl}`;
+  const headers = {
+    'Authorization': `Bearer ${process.env.QSTASH_TOKEN}`,
+    'Content-Type': 'application/json'
+  };
+  if (dedupId) headers['Upstash-Deduplication-Id'] = dedupId;
+  const res = await fetch(enqueueUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`QStash enqueue failed: ${res.status} ${text}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
+// In-memory job store (DEV/initial). Replace with Redis/DB for production.
+const jobs = new Map();
+
+function createJob(initialData = {}) {
+  const jobId = uuidv4();
+  const now = new Date().toISOString();
+  const job = {
+    id: jobId,
+    status: 'queued', // queued | running | completed | failed
+    progress: 0,
+    createdAt: now,
+    updatedAt: now,
+    result: null,
+    error: null,
+    meta: initialData
+  };
+  jobs.set(jobId, job);
+  return job;
+}
+
+function updateJob(jobId, updates) {
+  const job = jobs.get(jobId);
+  if (!job) return null;
+  // Do not downgrade a finished job
+  if (job.status === 'completed' || job.status === 'failed') {
+    return job;
+  }
+  // Prevent progress regression
+  const merged = { ...job, ...updates };
+  if (typeof updates?.progress === 'number' && typeof job.progress === 'number') {
+    merged.progress = Math.max(job.progress, updates.progress);
+  }
+  const next = { ...merged, updatedAt: new Date().toISOString() };
+  jobs.set(jobId, next);
+  return next;
+}
+
+function getJob(jobId) {
+  return jobs.get(jobId) || null;
+}
+
+// Idempotency mapping: idempotencyKey -> jobId (DEV/initial)
+const idempotencyMap = new Map();
+function getOrCreateJobForKey(idempotencyKey, createJobFn) {
+  if (!idempotencyKey) return null;
+  const existing = idempotencyMap.get(idempotencyKey);
+  if (existing) return existing;
+  const job = createJobFn();
+  idempotencyMap.set(idempotencyKey, job);
+  return job;
+}
+
+// API Request/Response Logging Middleware
+app.use((req, res, next) => {
+  // Log request
+  logger.logApiRequest(req.method, req.path, req.body, req.headers);
+  
+  // Override res.json to log responses
+  const originalJson = res.json;
+  res.json = function(data) {
+    logger.logApiResponse(req.method, req.path, res.statusCode, data);
+    return originalJson.call(this, data);
+  };
+  
+  next();
+});
 
 // Default Composio Entity ID for tool execution (can be overridden per request)
 const DEFAULT_COMPOSIO_ENTITY_ID = process.env.COMPOSIO_ENTITY_ID || 'default_user';
@@ -70,8 +182,8 @@ class ReactAgentManager {
     }
     
     this.llm = new ChatOpenAI({
-      modelName: "gpt-4o-mini",
-      temperature: 0.1,
+      modelName: "gpt-5-mini-2025-08-07",
+      temperature: 1,
       openAIApiKey: process.env.OPENAI_API_KEY
     });
     
@@ -1854,133 +1966,181 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
   const startTime = Date.now();
   try {
     let { transcript, text, meetingId, agentType, userId, enableNotifications } = req.body;
-    
-    // Handle different input formats
-    let processedTranscript = null;
-    let inputSource = 'unknown';
-    
-    // Case 1: File upload
-    if (req.file) {
-      console.log(`[MultiSwarmAPI] Processing uploaded file: ${req.file.originalname} (${req.file.size} bytes)`);
-      processedTranscript = processFileInput(req.file.buffer, req.file.originalname);
-      inputSource = 'file_upload';
-    }
-    // Case 2: Plain text
-    else if (text) {
-      console.log(`[MultiSwarmAPI] Processing text input (${text.length} characters)`);
-      processedTranscript = processTextInput(text);
-      inputSource = 'text_input';
-    }
-    // Case 3: Transcript object (original format)
-    else if (transcript) {
-      console.log(`[MultiSwarmAPI] Processing transcript object`);
-      processedTranscript = transcript;
-      inputSource = 'transcript_object';
-    }
-    else {
+
+    // Validate presence of at least one input form
+    if (!req.file && !text && !transcript) {
       return res.status(400).json({
         success: false,
         error: 'No valid input found. Please provide either a file upload, text content, or transcript object.'
       });
     }
-    
-    // Generate default values if not provided
+
+    // Generate default values (kept for metadata)
     const finalMeetingId = meetingId || generateDefaultIds().meetingId;
     const finalUserId = userId || generateDefaultIds().userId;
     const finalAgentType = agentType || generateDefaultIds().agentType;
     const finalEnableNotifications = enableNotifications !== false; // Default to true
-    
-    console.log(`[MultiSwarmAPI] Processing workflow for meeting ${finalMeetingId} using ${finalAgentType} agent (notifications: ${finalEnableNotifications})`);
-    
-    // Step 1: Process transcript with summarizer
-    const summaryResult = await meetingSummarizer.processCompleteWorkflow(processedTranscript, finalMeetingId);
-    
-    if (!summaryResult.success) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to process transcript with summarizer',
-        details: summaryResult.error,
+
+    // Derive idempotency key: prefer header, else use provided meetingId
+    // Note: if meetingId was not provided (we generated one), retries will not dedupe.
+    const headerIdem = req.header('Idempotency-Key') || req.header('X-Idempotency-Key');
+    const idempotencyKey = headerIdem || meetingId || null;
+
+    // Create/reuse job based on idempotency
+    let job = null;
+    if (idempotencyKey) {
+      const existing = idempotencyMap.get(idempotencyKey);
+      if (existing) {
+        const existingJob = getJob(existing.id || existing);
+        if (existingJob) {
+          return res.status(202).json({
+            success: true,
+            accepted: true,
+            jobId: existingJob.id,
+            statusUrl: `/api/jobs/${existingJob.id}`,
+            meetingId: existingJob.meta?.meetingId || finalMeetingId,
+            agentType: existingJob.meta?.agentType || finalAgentType,
+            receivedAt: existingJob.createdAt,
+            idempotency: { reused: true }
+          });
+        }
+      }
+      job = createJob({
+        endpoint: '/api/multi-swarm/process-transcript-workflow',
         meetingId: finalMeetingId,
-        timestamp: new Date().toISOString()
+        userId: finalUserId,
+        agentType: finalAgentType,
+        enableNotifications: finalEnableNotifications,
+        submittedAtMs: startTime,
+        idempotencyKey
+      });
+      idempotencyMap.set(idempotencyKey, job);
+    } else {
+      job = createJob({
+        endpoint: '/api/multi-swarm/process-transcript-workflow',
+        meetingId: finalMeetingId,
+        userId: finalUserId,
+        agentType: finalAgentType,
+        enableNotifications: finalEnableNotifications,
+        submittedAtMs: startTime
       });
     }
+
+    res.status(202).json({
+      success: true,
+      accepted: true,
+      jobId: job.id,
+      statusUrl: `/api/jobs/${job.id}`,
+      meetingId: finalMeetingId,
+      agentType: finalAgentType,
+      receivedAt: new Date().toISOString()
+    });
+
+    // After response, process in background or via QStash if configured
+    setImmediate(async () => {
+      try {
+        updateJob(job.id, { status: 'running', progress: 5 });
     
-    // Step 2: Use MeetingSummarizer's analysis agent to analyze action items with Linear context
+    // Handle different input formats
+    let processedTranscript = null;
+    let inputSource = 'unknown';
+    
+    if (req.file) {
+      console.log(`[MultiSwarmAPI] Processing uploaded file: ${req.file.originalname} (${req.file.size} bytes)`);
+      processedTranscript = processFileInput(req.file.buffer, req.file.originalname);
+      inputSource = 'file_upload';
+        } else if (text) {
+      console.log(`[MultiSwarmAPI] Processing text input (${text.length} characters)`);
+      processedTranscript = processTextInput(text);
+      inputSource = 'text_input';
+        } else if (transcript) {
+      console.log(`[MultiSwarmAPI] Processing transcript object`);
+      processedTranscript = transcript;
+      inputSource = 'transcript_object';
+    }
+
+        // If QStash is configured, publish a job to worker endpoint and return
+        if (qstash) {
+          try {
+            const rawBase = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).trim();
+            const normalizedBase = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
+            const targetUrl = `${normalizedBase}/internal/jobs/multi-swarm/process`;
+            const queueName = process.env.QSTASH_QUEUE_NAME;
+            const payload = {
+              jobId: job.id,
+              payload: {
+                transcript,
+                text,
+                meetingId: finalMeetingId,
+                agentType: finalAgentType,
+                userId: finalUserId,
+                enableNotifications: finalEnableNotifications,
+                inputSource
+              }
+            };
+
+            if (queueName) {
+              await enqueueToQstashQueue(queueName, targetUrl, payload, idempotencyKey);
+            } else {
+              const headers = {};
+              if (idempotencyKey) headers['Upstash-Deduplication-Id'] = idempotencyKey;
+              headers['Content-Type'] = 'application/json';
+              await qstash.publishJSON({ url: targetUrl, body: payload, headers });
+            }
+            updateJob(job.id, { status: 'queued', progress: 5, meta: { ...job.meta, queuedVia: 'qstash' } });
+            return; // hand off to worker; status will be updated by worker
+          } catch (e) {
+            console.warn('[MultiSwarmAPI] QStash publish failed, falling back to local processing:', e.message);
+          }
+        }
+
+        // Local fallback processing
+    // Step 1: Process transcript with summarizer
+    const summaryResult = await meetingSummarizer.processCompleteWorkflow(processedTranscript, finalMeetingId);
+    if (!summaryResult.success) {
+          updateJob(job.id, { status: 'failed', progress: 100, error: {
+            message: 'Failed to process transcript with summarizer',
+        details: summaryResult.error,
+            meetingId: finalMeetingId
+          }});
+          return;
+        }
+        updateJob(job.id, { progress: 40 });
+
+        // Step 2: Analyze action items with Linear context
     const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
       summaryResult.actionItems || 'No specific action items extracted',
       finalMeetingId
     );
-    
     if (!analysisResult.success) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to analyze action items with Linear context',
+          updateJob(job.id, { status: 'failed', progress: 100, error: {
+            message: 'Failed to analyze action items with Linear context',
         details: analysisResult.error,
-        meetingId: finalMeetingId,
-        timestamp: new Date().toISOString()
-      });
-    }
+            meetingId: finalMeetingId
+          }});
+          return;
+        }
+        updateJob(job.id, { progress: 60 });
 
-    // Extract Slack-only messages (if analysis returned JSON)
-    let slackOnlyMessages = [];
-    try {
-      const parsed = JSON.parse(analysisResult.analysis);
-      if (parsed && Array.isArray(parsed.slack_only_messages)) {
-        slackOnlyMessages = parsed.slack_only_messages;
-      }
-    } catch (e) {
-      console.warn('[MultiSwarmAPI] Analysis not valid JSON; skipping slack_only_messages extraction');
-    }
+        // Step 3: Create execution prompt
+        const executionPrompt = `\nEXECUTE THESE SPECIFIC LINEAR OPERATIONS:\n\nMEETING ID: ${finalMeetingId}\n\nANALYSIS RESULT:\n${analysisResult.analysis}\n\nEXECUTION INSTRUCTIONS:\nFollow the analysis above and execute the specified Linear operations precisely. \nDo NOT make decisions - only execute what is specified in the analysis.\nCreate, update, or comment on issues exactly as described in the analysis.\n\nRemember to:\n1. Always assign assignees to new issues\n2. Use proper priority levels (0-4)\n3. Create subtasks with parent_id when specified\n4. Include meeting context in descriptions\n5. Notify the communication swarm when complete\n`;
 
-    // Step 3: Create execution prompt with specific Linear operations from analysis
-    const executionPrompt = `
-EXECUTE THESE SPECIFIC LINEAR OPERATIONS:
-
-MEETING ID: ${finalMeetingId}
-
-ANALYSIS RESULT:
-${analysisResult.analysis}
-
-EXECUTION INSTRUCTIONS:
-Follow the analysis above and execute the specified Linear operations precisely. 
-Do NOT make decisions - only execute what is specified in the analysis.
-Create, update, or comment on issues exactly as described in the analysis.
-
-Remember to:
-1. Always assign assignees to new issues
-2. Use proper priority levels (0-4)
-3. Create subtasks with parent_id when specified
-4. Include meeting context in descriptions
-5. Notify the communication swarm when complete
-`;
-
-    // Step 4: Send to project management swarm for execution
+        // Step 4: Execute via swarm
     const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, finalUserId);
-    
-    // Step 5: If analysis contained Slack-only messages, notify communication swarm
-    let slackDispatch = null;
-    if (finalEnableNotifications && slackOnlyMessages && slackOnlyMessages.length > 0) {
-      const slackMessage = `Non-actionable meeting notes to share with the team (no Linear changes needed):\n\n${slackOnlyMessages.map((m, i) => `${i + 1}. ${m}`).join('\n')}`;
-      try {
-        slackDispatch = await multiSwarmManager.communicateBetweenSwarms(
-          'project-management',
-          'communication',
-          slackMessage,
-          {
-            source: 'process-transcript-workflow',
-            meetingId: finalMeetingId,
-            defaultChannel: 'C07LW6LP6ET'
-          }
-        );
-      } catch (e) {
-        console.warn('[MultiSwarmAPI] Failed to send Slack-only messages:', e.message);
-      }
-    }
+        if (!swarmResult.success) {
+          updateJob(job.id, { status: 'failed', progress: 100, error: {
+            message: 'Swarm execution failed',
+            details: swarmResult.error,
+            meetingId: finalMeetingId
+          }, meta: { inputSource } });
+          return;
+        }
 
-    if (swarmResult.success) {
-      console.log(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Success | meetingId: ${finalMeetingId} | agentType: ${finalAgentType} | Duration: ${Date.now() - startTime}ms`);
-      res.json({
-        success: true,
+        // Complete
+        updateJob(job.id, {
+          status: 'completed',
+          progress: 100,
+          result: {
         meetingId: finalMeetingId,
         agentType: finalAgentType,
         summary: {
@@ -1990,42 +2150,161 @@ Remember to:
           actionItemsError: summaryResult.actionItemsError
         },
         swarmResult: swarmResult,
-        slackOnlyDispatch: slackDispatch,
-        notification: finalEnableNotifications ? {
-          enabled: true,
-          result: null // No direct notification result here, handled by swarm
-        } : {
-          enabled: false
-        },
+            notification: finalEnableNotifications ? { enabled: true } : { enabled: false },
         inputSource: inputSource,
+            durationMs: Date.now() - startTime,
         timestamp: new Date().toISOString()
-      });
-    } else {
-      console.log(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Error | meetingId: ${finalMeetingId} | agentType: ${finalAgentType} | Duration: ${Date.now() - startTime}ms | Error: ${swarmResult.error}`);
+          }
+        });
+
+      } catch (error) {
+        console.error(`[MultiSwarmAPI][Background] Job ${job.id} failed:`, error);
+        updateJob(job.id, { status: 'failed', progress: 100, error: { message: error.message, stack: error.stack } });
+      }
+    });
+
+  } catch (error) {
+    console.error(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Exception (pre-ack) | meetingId: ${req.body.meetingId || null} | agentType: ${req.body.agentType || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
       res.status(500).json({
         success: false,
-        error: swarmResult.error,
-        meetingId: finalMeetingId,
-        agentType: finalAgentType,
-        summary: {
-          formattedTranscript: summaryResult.formattedTranscript,
-          summary: summaryResult.summary,
-          actionItems: summaryResult.actionItems,
-          actionItemsError: summaryResult.actionItemsError
-        },
-        swarmError: swarmResult.error,
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-  } catch (error) {
-    console.error(`[MultiSwarmAPI][Response] /api/multi-swarm/process-transcript-workflow | Exception | meetingId: ${req.body.meetingId || null} | agentType: ${req.body.agentType || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
-    res.status(500).json({
-      success: false,
       error: error.message,
       meetingId: req.body.meetingId || null,
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// Jobs status endpoint
+app.get('/api/jobs/:jobId', (req, res) => {
+  try {
+    const job = getJob(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ success: false, error: 'Job not found' });
+    }
+    res.json({
+      success: true,
+      job: {
+        id: job.id,
+        status: job.status,
+        progress: job.progress,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        result: job.result,
+        error: job.error,
+        meta: job.meta
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Worker endpoint that QStash calls to process a job
+app.post('/internal/jobs/multi-swarm/process', async (req, res) => {
+  try {
+    // Optional: verify QStash signature
+    if (qstashReceiver) {
+      const signature = req.header('Upstash-Signature');
+      const bodyString = JSON.stringify(req.body || {});
+      const rawBase = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).trim();
+      const normalizedBase = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
+      const url = `${normalizedBase}/internal/jobs/multi-swarm/process`;
+      const verified = await qstashReceiver.verify({ signature, body: bodyString, url });
+      if (!verified) {
+        return res.status(401).json({ success: false, error: 'Invalid QStash signature' });
+      }
+    }
+
+    const { jobId, payload } = req.body || {};
+    if (!jobId || !payload) {
+      // Return 2xx to avoid QStash retries on bad payloads
+      return res.status(200).json({ success: false, error: 'Missing jobId or payload' });
+    }
+
+    const job = getJob(jobId);
+    if (!job) {
+      // Acknowledge to avoid retries; nothing to do
+      return res.status(200).json({ success: true, ignored: true, reason: 'job_not_found' });
+    }
+
+    // If already running or finished, ack to avoid duplicate work on retries
+    if (job.status === 'running' || job.status === 'completed' || job.status === 'failed') {
+      return res.status(200).json({ success: true, ignored: true, reason: 'already_processed' });
+    }
+
+    updateJob(job.id, { status: 'running', progress: 10, meta: { ...job.meta, worker: 'qstash' } });
+
+    // Ack immediately so QStash does not retry due to timeouts; process in background
+    res.status(200).json({ success: true, accepted: true, jobId: job.id });
+
+    const { transcript, text, meetingId, agentType, userId, enableNotifications, inputSource } = payload;
+
+    setImmediate(async () => {
+      try {
+        // Rebuild processedTranscript from payload
+        let processedTranscript = null;
+        if (text) processedTranscript = processTextInput(text);
+        else if (transcript) processedTranscript = transcript;
+
+        if (!processedTranscript) {
+          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'No transcript/text provided in payload' } });
+          return;
+        }
+
+        // Step 1: Summarizer
+        const summaryResult = await meetingSummarizer.processCompleteWorkflow(processedTranscript, meetingId);
+        if (!summaryResult.success) {
+          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'Failed to process transcript with summarizer', details: summaryResult.error, meetingId } });
+          return;
+        }
+        updateJob(job.id, { progress: 40 });
+
+        // Step 2: Analysis
+        const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
+          summaryResult.actionItems || 'No specific action items extracted',
+          meetingId
+        );
+        if (!analysisResult.success) {
+          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'Failed to analyze action items with Linear context', details: analysisResult.error, meetingId } });
+          return;
+        }
+        updateJob(job.id, { progress: 60 });
+
+        // Step 3: Execution
+        const executionPrompt = `\nEXECUTE THESE SPECIFIC LINEAR OPERATIONS:\n\nMEETING ID: ${meetingId}\n\nANALYSIS RESULT:\n${analysisResult.analysis}\n\nEXECUTION INSTRUCTIONS:\nFollow the analysis above and execute the specified Linear operations precisely. \nDo NOT make decisions - only execute what is specified in the analysis.\nCreate, update, or comment on issues exactly as described in the analysis.\n\nRemember to:\n1. Always assign assignees to new issues\n2. Use proper priority levels (0-4)\n3. Create subtasks with parent_id when specified\n4. Include meeting context in descriptions\n5. Notify the communication swarm when complete\n`;
+
+        const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, userId);
+        if (!swarmResult.success) {
+          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'Swarm execution failed', details: swarmResult.error, meetingId }, meta: { ...job.meta, inputSource } });
+          return;
+        }
+
+        updateJob(job.id, {
+          status: 'completed',
+          progress: 100,
+          result: {
+            meetingId,
+            agentType,
+            summary: {
+              formattedTranscript: summaryResult.formattedTranscript,
+              summary: summaryResult.summary,
+              actionItems: summaryResult.actionItems,
+              actionItemsError: summaryResult.actionItemsError
+            },
+            swarmResult,
+            notification: enableNotifications ? { enabled: true } : { enabled: false },
+            inputSource,
+            timestamp: new Date().toISOString()
+          }
+        });
+      } catch (error) {
+        console.error('[Worker][QStash] Background error:', error);
+        updateJob(job.id, { status: 'failed', progress: 100, error: { message: error.message, stack: error.stack } });
+      }
+    });
+  } catch (error) {
+    console.error('[Worker][QStash] Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -2096,29 +2375,98 @@ app.get('/api/multi-swarm/health', (req, res) => {
   }
 });
 
+// Log Management Endpoints
+app.get('/api/logs', (req, res) => {
+  try {
+    const logFiles = logger.getLogFiles();
+    res.json({
+      success: true,
+      logFiles,
+      currentLogFile: logger.getCurrentLogFile(),
+      logsDirectory: logger.getLogsDirectory()
+    });
+  } catch (error) {
+    console.error('[LogsAPI] Error getting log files:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/logs/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const logContent = logger.readLogFile(filename);
+    
+    if (logContent === null) {
+      return res.status(404).json({
+        success: false,
+        error: 'Log file not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      filename,
+      content: logContent,
+      size: logContent.length
+    });
+  } catch (error) {
+    console.error('[LogsAPI] Error reading log file:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/logs/clean', (req, res) => {
+  try {
+    logger.cleanOldLogs();
+    res.json({
+      success: true,
+      message: 'Old logs cleaned successfully'
+    });
+  } catch (error) {
+    console.error('[LogsAPI] Error cleaning logs:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 A2A Backend Server with React Agents running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🤖 Ready to create autonomous React agents!`);
+  console.log(`📝 Logs available at: ${logger.getLogsDirectory()}`);
+  logger.logSystemEvent(`Server started successfully on port ${PORT}`);
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🔄 Shutting down A2A Backend Server...');
+  logger.logSystemEvent('Server shutdown initiated');
   
   // Destroy all agents
   const agents = agentManager.listAgents();
   for (const agent of agents) {
     try {
       await agentManager.destroyAgent(agent.id);
+      logger.logAgentOperation('destroyed', agent.id);
     } catch (error) {
       console.error(`Error destroying agent ${agent.id}:`, error);
+      logger.logSystemEvent(`Error destroying agent ${agent.id}`, { error: error.message });
     }
   }
   
   console.log('✅ All agents destroyed');
+  logger.logSystemEvent('All agents destroyed');
   console.log('👋 A2A Backend Server shut down gracefully');
+  logger.logSystemEvent('Server shutdown completed');
   process.exit(0);
 });
 

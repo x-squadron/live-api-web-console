@@ -352,7 +352,7 @@ export const slackSendMessage = tool(
 
     // Default channel if not specified
     if (!normalized.channel || typeof normalized.channel !== 'string' || normalized.channel.trim() === '') {
-      normalized.channel = 'D07T5M9JW6N';
+      normalized.channel = 'C08KCHMGZV3';
     }
 
     // Ensure text is a string
@@ -396,7 +396,7 @@ export const slackSendMessage = tool(
     name: "SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL",
     description: "Send a message to a Slack channel",
     schema: z.object({
-      channel: z.string().optional().describe("Channel ID or name; defaults to D07T5M9JW6N"),
+      channel: z.string().optional().describe("Channel ID or name; defaults to C08KCHMGZV3"),
       text: z.string().describe("Message text to send"),
       attachments: z.union([z.string(), z.array(z.object({})).optional()]).optional().describe("Optional attachments (array or JSON string)"),
       blocks: z.union([z.string(), z.array(z.object({})).optional()]).optional().describe("Optional blocks (array or JSON string)"),

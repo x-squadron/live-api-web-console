@@ -45,26 +45,26 @@ export class MeetingSummarizer {
 
 CRITICAL:
 - Do NOT perform any Linear write operations.
-- You MAY send Slack FYI messages directly to inform the team (default channel: D07T5M9JW6N).
+- You MAY send Slack FYI messages directly to inform the team (default channel: C08KCHMGZV3).
 - Otherwise, return ONLY a JSON plan for Linear actions.
 
 ALLOWED TOOLS:
 - LINEAR_LIST_LINEAR_ISSUES (READ-ONLY): List existing Linear issues (for matching and deduplication)
-- SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL: Send FYI/announcement messages to Slack (use default channel D07T5M9JW6N when not specified)
+- SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL: Send FYI/announcement messages to Slack (use default channel C08KCHMGZV3 when not specified)
 
 MANDATORY STEPS (in a sensible order based on available data):
 1. List existing issues for matching against action items.
 2. Analyze action items against existing issues and decide: update existing, add comment, or create new.
 3. Produce a PLAN (JSON) with fields needed by executors. If a status change is implied, specify desired_state_name or state_category (the executor will map to state_id).
-4. For any FYI-only notes (no Linear change needed), send a concise Slack message to D07T5M9JW6N summarizing those points.
+4. For any FYI-only notes (no Linear change needed), send a concise Slack message to C08KCHMGZV3 summarizing those points.
 
 RULES:
 - Do NOT execute or simulate writes. You are planning only.
 - Prefer updating existing issues when match confidence ≥ 0.6; otherwise plan new issue creation.
 - Include clear reasons and confidence scores for matches and changes.
-- You SHOULD send FYI-only Slack notifications directly to D07T5M9JW6N to keep the team informed.
+- You SHOULD send FYI-only Slack notifications directly to C08KCHMGZV3 to keep the team informed.
   When calling the Slack tool, STRICTLY use these parameters only:
-    channel: "D07T5M9JW6N" (unless a different channel is explicitly specified)
+    channel: "C08KCHMGZV3" (unless a different channel is explicitly specified)
     text: string (the message to send)
   Do NOT include attachments or blocks.
 
@@ -89,7 +89,7 @@ OUTPUT FORMAT (return ONLY a JSON object, no prose):
   ],
   "slack_messages": [
     {
-      "channel": "string (defaults to D07T5M9JW6N)",
+      "channel": "string (defaults to C08KCHMGZV3)",
       "message": "string (informational updates only)",
       "type": "notification" | "update" | "announcement",
       "reason": "string"

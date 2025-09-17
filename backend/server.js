@@ -19,7 +19,9 @@ import { createLinearAgent, runLinearMeetingAgent } from './LinearMeetingAgent.j
 import { SwarmManager, MeetingSummarizer } from './swarm/index.js';
 import { MultiSwarmManager, AgentFactory } from './swarm/index.js';
 import logger from './utils/logger.js';
-import { Client as QStashClient, Receiver as QStashReceiver } from '@upstash/qstash';
+// Upstash Workflows replaces QStash queues
+import workflow from './workflows/agentic.workflow.js';
+import { acquire as acquireIdem, done as doneIdem } from './workflows/utils/idempotency.js';
 
 console.log('🔄 Starting A2A Backend Server with LangChain React Agents...');
 logger.logSystemEvent('Server startup initiated');
@@ -61,42 +63,7 @@ const upload = multer({
 console.log('✅ File upload middleware configured');
 logger.logSystemEvent('File upload middleware configured');
 
-// QStash setup (optional if env vars present)
-const qstash = (process.env.QSTASH_TOKEN && process.env.QSTASH_URL)
-  ? new QStashClient({
-      token: process.env.QSTASH_TOKEN,
-      url: process.env.QSTASH_URL
-    })
-  : null;
-
-const qstashReceiver = (process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_NEXT_SIGNING_KEY)
-  ? new QStashReceiver({
-      currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY,
-      nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY
-    })
-  : null;
-
-// Helper to enqueue to a named QStash queue (visible in Console → Queues)
-async function enqueueToQstashQueue(queueName, targetUrl, body, dedupId) {
-  const baseUrl = process.env.QSTASH_URL || 'https://qstash.upstash.io';
-  // Do NOT encode targetUrl, QStash expects a plain absolute URL with scheme
-  const enqueueUrl = `${baseUrl}/v2/enqueue/${encodeURIComponent(queueName)}/${targetUrl}`;
-  const headers = {
-    'Authorization': `Bearer ${process.env.QSTASH_TOKEN}`,
-    'Content-Type': 'application/json'
-  };
-  if (dedupId) headers['Upstash-Deduplication-Id'] = dedupId;
-  const res = await fetch(enqueueUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`QStash enqueue failed: ${res.status} ${text}`);
-  }
-  return res.json().catch(() => ({}));
-}
+// Upstash QStash removed. Workflows are used instead.
 
 // In-memory job store (DEV/initial). Replace with Redis/DB for production.
 const jobs = new Map();
@@ -844,6 +811,90 @@ function formatTranscriptForAgent(transcript) {
 
 // API Routes
 console.log('🔄 Setting up API routes...');
+// Orchestration trigger endpoint (replaces queue publish)
+app.post('/orchestrate/agentic', async (req, res) => {
+  try {
+    const { tenantId, sessionId, flowType, payload } = req.body || {};
+    if (!tenantId || !sessionId) {
+      return res.status(400).json({ success: false, error: 'tenantId and sessionId are required' });
+    }
+    const run = await workflow.trigger({ tenantId, sessionId, flowType: flowType || 'default', payload });
+    return res.status(202).json({ success: true, status: 'accepted', runId: run.runId || null });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Internal workflow step endpoints used by Upstash Workflows
+app.post('/internal/workflow/summary', async (req, res) => {
+  try {
+    const { transcript, text, meetingId } = req.body || {};
+    if (!transcript && !text) {
+      return res.status(400).json({ success: false, error: 'transcript or text is required' });
+    }
+    const processed = transcript ? transcript : processTextInput(text);
+    const result = await meetingSummarizer.processCompleteWorkflow(processed, meetingId || `meeting_${Date.now()}`);
+    return res.json({ success: true, result });
+  } catch (e) {
+    return res.status(200).json({ success: false, error: e.message });
+  }
+});
+
+app.post('/internal/workflow/analysis', async (req, res) => {
+  try {
+    const { meetingId, actionItems } = req.body || {};
+    if (!meetingId) {
+      return res.status(400).json({ success: false, error: 'meetingId is required' });
+    }
+    const baseItems = actionItems || 'No specific action items extracted';
+    const result = await meetingSummarizer.analyzeActionItemsWithContext(baseItems, meetingId);
+    return res.json({ success: true, result });
+  } catch (e) {
+    return res.status(200).json({ success: false, error: e.message });
+  }
+});
+
+app.post('/internal/workflow/exec', async (req, res) => {
+  try {
+    const { meetingId, analysis, userId } = req.body || {};
+    if (!meetingId || !analysis) {
+      return res.status(400).json({ success: false, error: 'meetingId and analysis are required' });
+    }
+    let linearOperations = null;
+    try {
+      const parsed = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
+      linearOperations = (parsed.linear_operations || []).filter(op => {
+        if (!op) return false;
+        const opType = op.operation;
+        if (opType === 'create_issue' || opType === 'create_subtask') return true;
+        const conf = typeof op.matching_confidence === 'number' ? op.matching_confidence : 1;
+        return conf >= 0.7;
+      });
+    } catch {}
+    const executionPrompt = linearOperations
+      ? `You will receive a JSON array of Linear operations to execute. Follow EXACTLY and map desired_state_name/state_category to state_id via LINEAR_LIST_LINEAR_STATES. Only update/comment existing issues if matching_confidence >= 0.7. Here are the operations:\n\n${JSON.stringify(linearOperations, null, 2)}`
+      : `EXECUTE THESE SPECIFIC LINEAR OPERATIONS BASED ON ANALYSIS (raw):\n\n${typeof analysis === 'string' ? analysis : JSON.stringify(analysis)}`;
+    const execResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, userId || 'default_user');
+    if (!execResult.success) {
+      return res.json({ success: false, error: execResult.error });
+    }
+    return res.json({ success: true, result: execResult.result });
+  } catch (e) {
+    return res.status(200).json({ success: false, error: e.message });
+  }
+});
+
+app.post('/internal/workflow/persist', async (req, res) => {
+  try {
+    const { jobId, data, status } = req.body || {};
+    if (jobId) {
+      updateJob(jobId, { status: status || 'completed', progress: 100, result: data });
+    }
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(200).json({ success: false, error: e.message });
+  }
+});
 
 // Health check
 app.get('/health', (req, res) => {
@@ -1966,9 +2017,29 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
   const startTime = Date.now();
   try {
     let { transcript, text, meetingId, agentType, userId, enableNotifications } = req.body;
+    // New payload support: accept meeting record style fields
+    const {
+      id: meetingRecordId,
+      user_id: altUserId,
+      platform,
+      native_meeting_id,
+      constructed_meeting_url,
+      status: meetingStatus,
+      bot_container_id,
+      connection_id,
+      start_time,
+      end_time,
+      data: meetingData,
+      created_at,
+      updated_at,
+      transcript_generated_at
+    } = req.body || {};
+
+    // Normalize and sanitize text if provided (remove BOM, trim)
+    const normalizedText = typeof text === 'string' ? text.replace(/^\ufeff/, '').trim() : text;
 
     // Validate presence of at least one input form
-    if (!req.file && !text && !transcript) {
+    if (!req.file && !normalizedText && !transcript) {
       return res.status(400).json({
         success: false,
         error: 'No valid input found. Please provide either a file upload, text content, or transcript object.'
@@ -1976,15 +2047,26 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
     }
 
     // Generate default values (kept for metadata)
-    const finalMeetingId = meetingId || generateDefaultIds().meetingId;
-    const finalUserId = userId || generateDefaultIds().userId;
+    const derivedMeetingId = meetingId || native_meeting_id || constructed_meeting_url || (typeof meetingRecordId !== 'undefined' ? String(meetingRecordId) : null);
+    const finalMeetingId = derivedMeetingId || generateDefaultIds().meetingId;
+    const finalUserId = userId || altUserId || generateDefaultIds().userId;
     const finalAgentType = agentType || generateDefaultIds().agentType;
     const finalEnableNotifications = enableNotifications !== false; // Default to true
 
     // Derive idempotency key: prefer header, else use provided meetingId
     // Note: if meetingId was not provided (we generated one), retries will not dedupe.
     const headerIdem = req.header('Idempotency-Key') || req.header('X-Idempotency-Key');
-    const idempotencyKey = headerIdem || meetingId || null;
+    const idempotencyKey = headerIdem || meetingId || native_meeting_id || constructed_meeting_url || (typeof meetingRecordId !== 'undefined' ? String(meetingRecordId) : null);
+
+    // Prepare meeting/job semantics
+    const meetingDateIso = end_time || new Date().toISOString();
+    const meetingDate = new Date(meetingDateIso);
+    const y = meetingDate.getUTCFullYear();
+    const m = String(meetingDate.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(meetingDate.getUTCDate()).padStart(2, '0');
+    const dateLabel = `${y}-${m}-${d}`;
+    const meetingIdentifier = native_meeting_id || finalMeetingId;
+    const workflowLabel = `${dateLabel}_${meetingIdentifier}`;
 
     // Create/reuse job based on idempotency
     let job = null;
@@ -2012,7 +2094,21 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
         agentType: finalAgentType,
         enableNotifications: finalEnableNotifications,
         submittedAtMs: startTime,
-        idempotencyKey
+        idempotencyKey,
+        meetingDate: meetingDateIso,
+        workflowLabel,
+        // Attach new payload metadata for observability
+        platform,
+        native_meeting_id,
+        constructed_meeting_url,
+        meetingStatus,
+        bot_container_id,
+        connection_id,
+        start_time,
+        end_time,
+        created_at,
+        updated_at,
+        transcript_generated_at
       });
       idempotencyMap.set(idempotencyKey, job);
     } else {
@@ -2022,7 +2118,21 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
         userId: finalUserId,
         agentType: finalAgentType,
         enableNotifications: finalEnableNotifications,
-        submittedAtMs: startTime
+        submittedAtMs: startTime,
+        meetingDate: meetingDateIso,
+        workflowLabel,
+        // Attach new payload metadata for observability
+        platform,
+        native_meeting_id,
+        constructed_meeting_url,
+        meetingStatus,
+        bot_container_id,
+        connection_id,
+        start_time,
+        end_time,
+        created_at,
+        updated_at,
+        transcript_generated_at
       });
     }
 
@@ -2036,7 +2146,7 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
       receivedAt: new Date().toISOString()
     });
 
-    // After response, process in background or via QStash if configured
+    // After response, process in background or via Workflow trigger
     setImmediate(async () => {
       try {
         updateJob(job.id, { status: 'running', progress: 5 });
@@ -2049,9 +2159,9 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
       console.log(`[MultiSwarmAPI] Processing uploaded file: ${req.file.originalname} (${req.file.size} bytes)`);
       processedTranscript = processFileInput(req.file.buffer, req.file.originalname);
       inputSource = 'file_upload';
-        } else if (text) {
-      console.log(`[MultiSwarmAPI] Processing text input (${text.length} characters)`);
-      processedTranscript = processTextInput(text);
+        } else if (normalizedText) {
+      console.log(`[MultiSwarmAPI] Processing text input (${normalizedText.length} characters)`);
+      processedTranscript = processTextInput(normalizedText);
       inputSource = 'text_input';
         } else if (transcript) {
       console.log(`[MultiSwarmAPI] Processing transcript object`);
@@ -2059,39 +2169,52 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
       inputSource = 'transcript_object';
     }
 
-        // If QStash is configured, publish a job to worker endpoint and return
-        if (qstash) {
+        // Trigger Upstash Workflow (durable orchestration)
+        try {
+          // Light-weight idempotency via label: skip if existing run with same label
           try {
-            const rawBase = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).trim();
-            const normalizedBase = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
-            const targetUrl = `${normalizedBase}/internal/jobs/multi-swarm/process`;
-            const queueName = process.env.QSTASH_QUEUE_NAME;
-            const payload = {
-              jobId: job.id,
-              payload: {
-                transcript,
-                text,
-                meetingId: finalMeetingId,
-                agentType: finalAgentType,
-                userId: finalUserId,
-                enableNotifications: finalEnableNotifications,
-                inputSource
-              }
-            };
-
-            if (queueName) {
-              await enqueueToQstashQueue(queueName, targetUrl, payload, idempotencyKey);
-            } else {
-              const headers = {};
-              if (idempotencyKey) headers['Upstash-Deduplication-Id'] = idempotencyKey;
-              headers['Content-Type'] = 'application/json';
-              await qstash.publishJSON({ url: targetUrl, body: payload, headers });
+            const existing = await workflow.findRunsByLabel(workflowLabel, { count: 1 });
+            if (existing?.runs?.length) {
+              updateJob(job.id, { status: 'queued', progress: 5, meta: { ...job.meta, queuedVia: 'workflow', reusedLabel: workflowLabel, existingRunId: existing.runs[0].runId || existing.runs[0].id } });
+              return;
             }
-            updateJob(job.id, { status: 'queued', progress: 5, meta: { ...job.meta, queuedVia: 'qstash' } });
-            return; // hand off to worker; status will be updated by worker
-          } catch (e) {
-            console.warn('[MultiSwarmAPI] QStash publish failed, falling back to local processing:', e.message);
+          } catch (listErr) {
+            console.warn('[MultiSwarmAPI] Unable to list runs by label, proceeding to trigger:', listErr.message);
           }
+
+          const triggerPayload = {
+            tenantId: finalUserId || 'global',
+            sessionId: finalMeetingId,
+            flowType: 'default',
+            payload: {
+              transcript,
+              text: normalizedText,
+              meetingId: finalMeetingId,
+              agentType: finalAgentType,
+              userId: finalUserId,
+              enableNotifications: finalEnableNotifications,
+              inputSource,
+              jobId: job.id,
+              // New payload metadata passthrough
+              platform,
+              native_meeting_id,
+              constructed_meeting_url,
+              meetingStatus,
+              bot_container_id,
+              connection_id,
+              start_time,
+              end_time,
+              created_at,
+              updated_at,
+              transcript_generated_at,
+              meetingRecordId
+            }
+          };
+          const run = await workflow.trigger(triggerPayload, { label: workflowLabel });
+          updateJob(job.id, { status: 'queued', progress: 5, meta: { ...job.meta, queuedVia: 'workflow', runId: run.runId || null } });
+          return; // orchestration handled by workflow
+        } catch (e) {
+          console.warn('[MultiSwarmAPI] Workflow trigger failed, falling back to local processing:', e.message);
         }
 
         // Local fallback processing
@@ -2199,114 +2322,7 @@ app.get('/api/jobs/:jobId', (req, res) => {
   }
 });
 
-// Worker endpoint that QStash calls to process a job
-app.post('/internal/jobs/multi-swarm/process', async (req, res) => {
-  try {
-    // Optional: verify QStash signature
-    if (qstashReceiver) {
-      const signature = req.header('Upstash-Signature');
-      const bodyString = JSON.stringify(req.body || {});
-      const rawBase = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).trim();
-      const normalizedBase = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
-      const url = `${normalizedBase}/internal/jobs/multi-swarm/process`;
-      const verified = await qstashReceiver.verify({ signature, body: bodyString, url });
-      if (!verified) {
-        return res.status(401).json({ success: false, error: 'Invalid QStash signature' });
-      }
-    }
-
-    const { jobId, payload } = req.body || {};
-    if (!jobId || !payload) {
-      // Return 2xx to avoid QStash retries on bad payloads
-      return res.status(200).json({ success: false, error: 'Missing jobId or payload' });
-    }
-
-    const job = getJob(jobId);
-    if (!job) {
-      // Acknowledge to avoid retries; nothing to do
-      return res.status(200).json({ success: true, ignored: true, reason: 'job_not_found' });
-    }
-
-    // If already running or finished, ack to avoid duplicate work on retries
-    if (job.status === 'running' || job.status === 'completed' || job.status === 'failed') {
-      return res.status(200).json({ success: true, ignored: true, reason: 'already_processed' });
-    }
-
-    updateJob(job.id, { status: 'running', progress: 10, meta: { ...job.meta, worker: 'qstash' } });
-
-    // Ack immediately so QStash does not retry due to timeouts; process in background
-    res.status(200).json({ success: true, accepted: true, jobId: job.id });
-
-    const { transcript, text, meetingId, agentType, userId, enableNotifications, inputSource } = payload;
-
-    setImmediate(async () => {
-      try {
-        // Rebuild processedTranscript from payload
-        let processedTranscript = null;
-        if (text) processedTranscript = processTextInput(text);
-        else if (transcript) processedTranscript = transcript;
-
-        if (!processedTranscript) {
-          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'No transcript/text provided in payload' } });
-          return;
-        }
-
-        // Step 1: Summarizer
-        const summaryResult = await meetingSummarizer.processCompleteWorkflow(processedTranscript, meetingId);
-        if (!summaryResult.success) {
-          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'Failed to process transcript with summarizer', details: summaryResult.error, meetingId } });
-          return;
-        }
-        updateJob(job.id, { progress: 40 });
-
-        // Step 2: Analysis
-        const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
-          summaryResult.actionItems || 'No specific action items extracted',
-          meetingId
-        );
-        if (!analysisResult.success) {
-          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'Failed to analyze action items with Linear context', details: analysisResult.error, meetingId } });
-          return;
-        }
-        updateJob(job.id, { progress: 60 });
-
-        // Step 3: Execution
-        const executionPrompt = `\nEXECUTE THESE SPECIFIC LINEAR OPERATIONS:\n\nMEETING ID: ${meetingId}\n\nANALYSIS RESULT:\n${analysisResult.analysis}\n\nEXECUTION INSTRUCTIONS:\nFollow the analysis above and execute the specified Linear operations precisely. \nDo NOT make decisions - only execute what is specified in the analysis.\nCreate, update, or comment on issues exactly as described in the analysis.\n\nRemember to:\n1. Always assign assignees to new issues\n2. Use proper priority levels (0-4)\n3. Create subtasks with parent_id when specified\n4. Include meeting context in descriptions\n5. Notify the communication swarm when complete\n`;
-
-        const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, userId);
-        if (!swarmResult.success) {
-          updateJob(job.id, { status: 'failed', progress: 100, error: { message: 'Swarm execution failed', details: swarmResult.error, meetingId }, meta: { ...job.meta, inputSource } });
-          return;
-        }
-
-        updateJob(job.id, {
-          status: 'completed',
-          progress: 100,
-          result: {
-            meetingId,
-            agentType,
-            summary: {
-              formattedTranscript: summaryResult.formattedTranscript,
-              summary: summaryResult.summary,
-              actionItems: summaryResult.actionItems,
-              actionItemsError: summaryResult.actionItemsError
-            },
-            swarmResult,
-            notification: enableNotifications ? { enabled: true } : { enabled: false },
-            inputSource,
-            timestamp: new Date().toISOString()
-          }
-        });
-      } catch (error) {
-        console.error('[Worker][QStash] Background error:', error);
-        updateJob(job.id, { status: 'failed', progress: 100, error: { message: error.message, stack: error.stack } });
-      }
-    });
-  } catch (error) {
-    console.error('[Worker][QStash] Error:', error);
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
+// Removed old QStash worker endpoint.
 
 // Get communication history
 app.get('/api/multi-swarm/communications', (req, res) => {

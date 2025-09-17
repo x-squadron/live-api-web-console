@@ -31,6 +31,14 @@ SLACK_API_KEY=your_slack_api_key_here
 
 # Server Configuration
 PORT=3001
+
+# Upstash Workflows (replace old QStash queues)
+UPSTASH_WORKFLOW_URL=
+UPSTASH_WORKFLOW_TOKEN=
+
+# Upstash Redis (for idempotency lock)
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
 ### Installation & Running
@@ -50,6 +58,18 @@ npm run test:swarm
 ```
 
 The server will start on `http://localhost:3001` (or the port specified in your `.env`).
+### Orchestration (Upstash Workflows)
+
+- New endpoint to trigger durable orchestration:
+  - `POST /orchestrate/agentic`
+  - Body:
+    ```json
+    { "tenantId": "t1", "sessionId": "s1", "flowType": "default", "payload": {"...": "..."} }
+    ```
+  - Returns `202` with `{ runId }`.
+
+- Old QStash-based enqueue paths are removed. The multi-swarm workflow route now triggers the Upstash Workflow under the hood with global serialization per-tenant.
+
 
 ## 🐳 Docker
 
@@ -250,6 +270,42 @@ The swarm system is the heart of the backend, managing multiple AI agents that w
 5. **Health Monitoring**: Monitor swarm performance and health
 
 **Note**: These workflows are implemented using the available `server.js` and `/swarm/` folder components.
+
+### Accepted Payloads for `/api/multi-swarm/process-transcript-workflow`
+
+This endpoint accepts multiple input formats:
+
+- Text upload: `{ "text": "...plain transcript text..." }`
+- Transcript object: `{ "transcript": { "segments": [ { "start": 0, "speaker": "User", "text": "..." } ] } }`
+- File upload: `multipart/form-data` with `file` field (e.g., .txt or JSON)
+- Meeting record payload (new):
+
+```json
+{
+  "id": 14,
+  "user_id": 2,
+  "platform": "google_meet",
+  "native_meeting_id": "auk-abc-xyz",
+  "constructed_meeting_url": "https://meet.google.com/auk-abc-xyz",
+  "status": "completed",
+  "bot_container_id": "3ee0a866ca1016c301e0ada2c7aa524f1fd6326870261342f1e9b8421fcab0c2",
+  "connection_id": "d6a59f0f-82ee-423c-ab07-738993ca5343",
+  "start_time": "2025-09-06T14:58:51.630679",
+  "end_time": "2025-09-06T14:59:40.633322",
+  "data": {},
+  "created_at": "2025-09-06T14:58:51.407754",
+  "updated_at": "2025-09-06T14:59:40.629979",
+  "text": "\ufeffspk_31f9af64: Aluno...",
+  "transcript_generated_at": "2025-09-15T12:26:26.135837"
+}
+```
+
+Behavior and mappings:
+- `meetingId` is derived in priority order: header `Idempotency-Key` or `X-Idempotency-Key` → `meetingId` (body) → `native_meeting_id` → `constructed_meeting_url` → `id` (stringified) → generated.
+- `userId` falls back to `user_id` if `userId` not provided.
+- `text` is sanitized to remove BOM and trimmed before processing.
+- Idempotency key uses the same priority as above; repeated submissions return the existing job with `202`.
+- Metadata fields `platform`, `native_meeting_id`, `constructed_meeting_url`, `status`, `bot_container_id`, `connection_id`, `start_time`, `end_time`, `created_at`, `updated_at`, and `transcript_generated_at` are attached to job meta and forwarded to the orchestration payload.
 
 ## 🔧 Configuration
 

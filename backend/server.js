@@ -22,6 +22,8 @@ import logger from './utils/logger.js';
 // Upstash Workflows replaces QStash queues
 import workflow from './workflows/agentic.workflow.js';
 import { acquire as acquireIdem, done as doneIdem } from './workflows/utils/idempotency.js';
+// Import the workflow handler
+import { agenticWorkflow } from './workflows/agentic.serve.js';
 
 console.log('🔄 Starting A2A Backend Server with LangChain React Agents...');
 logger.logSystemEvent('Server startup initiated');
@@ -47,6 +49,11 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 console.log('✅ Middleware configured');
 logger.logSystemEvent('Middleware configured');
+
+// Register Upstash Workflow routes
+app.use('/workflows', agenticWorkflow.POST);
+console.log('✅ Upstash Workflow routes registered');
+logger.logSystemEvent('Upstash Workflow routes registered');
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -818,9 +825,35 @@ app.post('/orchestrate/agentic', async (req, res) => {
     if (!tenantId || !sessionId) {
       return res.status(400).json({ success: false, error: 'tenantId and sessionId are required' });
     }
-    const run = await workflow.trigger({ tenantId, sessionId, flowType: flowType || 'default', payload });
-    return res.status(202).json({ success: true, status: 'accepted', runId: run.runId || null });
+
+    // Generate idempotency key from meeting data for QStash deduplication
+    const { generateIdempotencyKey } = await import('./workflows/utils/idempotency.js');
+    const meetingId = payload?.meetingId || payload?.native_meeting_id || sessionId;
+    const endTime = payload?.end_time || new Date().toISOString();
+    const idempotencyKey = generateIdempotencyKey(meetingId, endTime);
+
+    // Use QStash's built-in flow control for queuing and parallelism
+    const run = await workflow.trigger({ 
+      tenantId, 
+      sessionId, 
+      flowType: flowType || 'default', 
+      payload
+    }, {
+      // QStash flow control parameters as options
+      flowControl: {
+        key: idempotencyKey, // Use idempotency key for deduplication
+        parallelism: 1 // Process 1 workflow at a time
+      }
+    });
+    
+    return res.status(202).json({ 
+      success: true, 
+      status: 'accepted', 
+      runId: run.runId || null,
+      idempotencyKey 
+    });
   } catch (e) {
+    console.error('Orchestration error:', e);
     return res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -1516,39 +1549,152 @@ app.post('/api/swarm/agents/:agentType/process-transcript', async (req, res) => 
   }
 });
 
-// New dedicated endpoint: Process transcript with LLM summarizer then send to swarm
+// New dedicated endpoint: Process transcript with LLM summarizer then trigger workflow
 app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
   const startTime = Date.now();
   try {
-    let { transcript, meetingId, agentType, userId } = req.body;
+    // Handle the new payload format with meeting record fields
+    const {
+      id: meetingRecordId,
+      user_id: userId,
+      platform,
+      native_meeting_id,
+      constructed_meeting_url,
+      status: meetingStatus,
+      bot_container_id,
+      connection_id,
+      start_time,
+      end_time,
+      data: meetingData,
+      created_at,
+      updated_at,
+      transcript_generated_at,
+      text,
+      transcript
+    } = req.body;
+
+    // Extract meeting ID from various possible fields
+    const meetingId = native_meeting_id || meetingRecordId || `meeting-${Date.now()}`;
+    const finalUserId = userId || 'default_user';
     
-    if (!transcript) {
-      return res.status(400).json({
+    console.log(`[SwarmAPI] Processing transcript for meeting ${meetingId} with workflow trigger`);
+    
+    // Prepare workflow payload
+    const workflowPayload = {
+      tenantId: String(finalUserId || 'global'),
+      sessionId: meetingId,
+      flowType: 'default',
+      payload: {
+        // Meeting record fields
+        id: meetingRecordId,
+        user_id: userId,
+        platform,
+        native_meeting_id,
+        constructed_meeting_url,
+        status: meetingStatus,
+        bot_container_id,
+        connection_id,
+        start_time,
+        end_time,
+        data: meetingData,
+        created_at,
+        updated_at,
+        transcript_generated_at,
+        // Content fields
+        text,
+        transcript,
+        meetingId,
+        userId: finalUserId,
+        jobId: `job-${Date.now()}`
+      }
+    };
+
+    // Generate idempotency key for QStash deduplication
+    const { generateIdempotencyKey } = await import('./workflows/utils/idempotency.js');
+    const idempotencyKey = generateIdempotencyKey(meetingId, end_time || new Date().toISOString());
+    
+    // Trigger the workflow with QStash flow control
+    const workflowResult = await workflow.trigger(workflowPayload, {
+      // QStash flow control parameters as options
+      flowControl: {
+        key: idempotencyKey, // Use idempotency key for deduplication
+        parallelism: 1 // Process 1 workflow at a time
+      }
+    });
+    
+    console.log(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Workflow triggered | meetingId: ${meetingId} | runId: ${workflowResult.runId} | Duration: ${Date.now() - startTime}ms`);
+    
+    res.status(202).json({
+      success: true,
+      status: 'workflow_triggered',
+      meetingId: meetingId,
+      runId: workflowResult.runId,
+      message: 'Workflow triggered successfully',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Exception | meetingId: ${req.body.native_meeting_id || req.body.id || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      meetingId: req.body.native_meeting_id || req.body.id || null,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Local processing endpoint: Process transcript with LLM summarizer then send to swarm (original flow)
+app.post('/api/multi-swarm/process-transcript-workflow', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    // Handle the new payload format with meeting record fields
+    const {
+      id: meetingRecordId,
+      user_id: userId,
+      platform,
+      native_meeting_id,
+      constructed_meeting_url,
+      status: meetingStatus,
+      bot_container_id,
+      connection_id,
+      start_time,
+      end_time,
+      data: meetingData,
+      created_at,
+      updated_at,
+      transcript_generated_at,
+      text,
+      transcript
+    } = req.body;
+
+    // Extract meeting ID from various possible fields
+    const meetingId = native_meeting_id || meetingRecordId || `meeting-${Date.now()}`;
+    const finalUserId = userId || 'default_user';
+    
+    console.log(`[SwarmAPI] Processing transcript locally for meeting ${meetingId}`);
+    
+    // Generate idempotency key from meeting data
+    const { generateIdempotencyKey } = await import('./workflows/utils/idempotency.js');
+    const idempotencyKey = generateIdempotencyKey(meetingId, end_time || new Date().toISOString());
+
+    // Check idempotency
+    const { acquire } = await import('./workflows/utils/idempotency.js');
+    const ok = await acquire(idempotencyKey, `local-${Date.now()}`);
+    if (!ok) {
+      return res.status(409).json({ 
         success: false,
-        error: 'Transcript is required'
+        status: 'duplicate_in_progress', 
+        idempotencyKey,
+        message: 'Local processing already running for this meeting' 
       });
     }
     
-    if (!meetingId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Meeting ID is required'
-      });
-    }
-    
-    // Default agentType to 'linear' if not provided
-    if (!agentType) {
-      agentType = 'linear';
-    }
-    // Default userId to 'test_user' if not provided
-    if (!userId) {
-      userId = 'test_user';
-    }
-    
-    console.log(`[SwarmAPI] Processing transcript with summarizer for meeting ${meetingId} using ${agentType} agent`);
+    // Add a small delay to simulate queuing behavior
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500)); // 500-1500ms delay
     
     // Step 1: Process transcript with summarizer
-    const summaryResult = await meetingSummarizer.processCompleteWorkflow(transcript, meetingId);
+    const summaryResult = await meetingSummarizer.processCompleteWorkflow(text || transcript, meetingId);
     
     if (!summaryResult.success) {
       return res.status(500).json({
@@ -1563,7 +1709,7 @@ app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
     // Step 2: Use MeetingSummarizer's analysis agent to analyze action items with Linear context
     const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
       summaryResult,
-      finalMeetingId
+      meetingId
     );
     
     if (!analysisResult.success) {
@@ -1571,7 +1717,7 @@ app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
         success: false,
         error: 'Failed to analyze action items with Linear context',
         details: analysisResult.error,
-        meetingId: finalMeetingId,
+        meetingId: meetingId,
         timestamp: new Date().toISOString()
       });
     }
@@ -1603,42 +1749,64 @@ app.post('/api/swarm/process-transcript-with-summary', async (req, res) => {
     const swarmResult = await multiSwarmManager.processWithSwarm('project-management', executionPrompt, finalUserId);
     
     if (swarmResult.success) {
-      console.log(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Success | meetingId: ${meetingId} | agentType: ${agentType} | Duration: ${Date.now() - startTime}ms`);
+      // Mark as done
+      const { done } = await import('./workflows/utils/idempotency.js');
+      await done(idempotencyKey);
+      
+      console.log(`[SwarmAPI][Response] /api/swarm/local/process-transcript-with-summary | Success | meetingId: ${meetingId} | Duration: ${Date.now() - startTime}ms`);
       res.json({
         success: true,
         meetingId: meetingId,
-        agentType: agentType,
+        idempotencyKey,
         summary: {
           formattedTranscript: summaryResult.formattedTranscript,
           summary: summaryResult.summary,
           actionItems: summaryResult.actionItems,
           actionItemsError: summaryResult.actionItemsError
         },
+        analysis: analysisResult.analysis,
         swarmResult: swarmResult.result,
         timestamp: new Date().toISOString()
       });
     } else {
-      console.log(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Error | meetingId: ${meetingId} | agentType: ${agentType} | Duration: ${Date.now() - startTime}ms | Error: ${swarmResult.error}`);
+      // Mark as failed
+      const { fail } = await import('./workflows/utils/idempotency.js');
+      await fail(idempotencyKey);
+      
+      console.log(`[SwarmAPI][Response] /api/swarm/local/process-transcript-with-summary | Error | meetingId: ${meetingId} | Duration: ${Date.now() - startTime}ms | Error: ${swarmResult.error}`);
       res.status(500).json({
         success: false,
         meetingId: meetingId,
-        agentType: agentType,
+        idempotencyKey,
         summary: {
           formattedTranscript: summaryResult.formattedTranscript,
           summary: summaryResult.summary,
           actionItems: summaryResult.actionItems,
           actionItemsError: summaryResult.actionItemsError
         },
+        analysis: analysisResult.analysis,
         swarmError: swarmResult.error,
         timestamp: new Date().toISOString()
       });
     }
   } catch (error) {
-    console.error(`[SwarmAPI][Response] /api/swarm/process-transcript-with-summary | Exception | meetingId: ${req.body.meetingId || null} | agentType: ${req.body.agentType || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
+    // Mark as failed
+    try {
+      const { fail } = await import('./workflows/utils/idempotency.js');
+      const meetingId = req.body.native_meeting_id || req.body.id || null;
+      const endTime = req.body.end_time || new Date().toISOString();
+      const { generateIdempotencyKey } = await import('./workflows/utils/idempotency.js');
+      const idempotencyKey = generateIdempotencyKey(meetingId, endTime);
+      await fail(idempotencyKey);
+    } catch (failError) {
+      console.error('Failed to mark local processing as failed:', failError);
+    }
+    
+    console.error(`[SwarmAPI][Response] /api/swarm/local/process-transcript-with-summary | Exception | meetingId: ${req.body.native_meeting_id || req.body.id || null} | Duration: ${Date.now() - startTime}ms | Error: ${error.message}`);
     res.status(500).json({
       success: false,
       error: error.message,
-      meetingId: req.body.meetingId || null,
+      meetingId: req.body.native_meeting_id || req.body.id || null,
       timestamp: new Date().toISOString()
     });
   }
@@ -2013,7 +2181,7 @@ function generateDefaultIds() {
 
 
 // New specialized endpoint: Process transcript with inter-swarm communication workflow
-app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), async (req, res) => {
+app.post('/api/multi-swarm/process-transcript-workflo', upload.single('file'), async (req, res) => {
   const startTime = Date.now();
   try {
     let { transcript, text, meetingId, agentType, userId, enableNotifications } = req.body;
@@ -2183,7 +2351,7 @@ app.post('/api/multi-swarm/process-transcript-workflow', upload.single('file'), 
           }
 
           const triggerPayload = {
-            tenantId: finalUserId || 'global',
+            tenantId: String(finalUserId || 'global'),
             sessionId: finalMeetingId,
             flowType: 'default',
             payload: {

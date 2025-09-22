@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { Client } from '@upstash/workflow';
 
-// Minimal client wrapper to trigger Upstash Workflow via REST API.
-// Prefers UPSTASH_WORKFLOW_* but falls back to QSTASH_* for convenience.
-const WORKFLOW_URL = (process.env.UPSTASH_WORKFLOW_URL || process.env.QSTASH_URL || '').trim();
-const WORKFLOW_TOKEN = (process.env.UPSTASH_WORKFLOW_TOKEN || process.env.QSTASH_TOKEN || '').trim();
+// Create Upstash Workflow client with your QStash token
+const client = new Client({
+  token: process.env.UPSTASH_WORKFLOW_TOKEN || ''
+});
 
 export const AgenticInput = z.object({
   tenantId: z.string().min(1),
@@ -14,49 +15,44 @@ export const AgenticInput = z.object({
 
 async function trigger(payload, options = {}) {
   const input = AgenticInput.parse(payload);
-  if (!WORKFLOW_URL || !WORKFLOW_TOKEN) {
+  
+  if (!process.env.UPSTASH_WORKFLOW_TOKEN) {
     return { runId: null, accepted: false, reason: 'workflow_not_configured', input };
   }
 
-  const base = WORKFLOW_URL.replace(/\/$/, '');
-  const url = `${base}/v1/workflows/agentic/trigger`;
-  const body = { ...input };
-  if (options.label) {
-    // Upstash Workflow supports labels on trigger body
-    body.label = options.label;
+  try {
+    // Use ngrok endpoint for the workflow - full URL with path
+    const workflowUrl = `${process.env.PUBLIC_BASE_URL}/workflows/agentic`;
+    console.log('Triggering workflow at:', workflowUrl);
+    
+    const result = await client.trigger({
+      url: workflowUrl,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(input),
+      ...options
+    });
+    
+    return result;
+  } catch (error) {
+    console.error('Workflow trigger failed:', error);
+    throw new Error(`Workflow trigger failed: ${error.message}`);
   }
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${WORKFLOW_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Workflow trigger failed: ${res.status} ${text}`);
-  }
-  return res.json().catch(() => ({}));
 }
 
 async function findRunsByLabel(label, { count = 1 } = {}) {
-  if (!WORKFLOW_URL || !WORKFLOW_TOKEN) {
+  if (!process.env.UPSTASH_WORKFLOW_TOKEN) {
     return { runs: [] };
   }
-  const base = WORKFLOW_URL.replace(/\/$/, '');
-  const url = `${base}/v1/workflows/runs?label=${encodeURIComponent(label)}&count=${count}`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${WORKFLOW_TOKEN}`
-    }
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`List runs failed: ${res.status} ${text}`);
+  
+  try {
+    console.warn('findRunsByLabel: QStash V2 doesn\'t support label-based run listing');
+    return { runs: [] };
+  } catch (error) {
+    console.error('Find runs by label failed:', error);
+    return { runs: [] };
   }
-  return res.json().catch(() => ({ runs: [] }));
 }
 
 export default { trigger, findRunsByLabel };

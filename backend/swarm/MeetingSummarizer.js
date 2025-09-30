@@ -55,7 +55,7 @@ ALLOWED TOOLS:
 MANDATORY STEPS (in a sensible order based on available data):
 1. List existing issues for matching against action items.
 2. Analyze action items against existing issues and decide: update existing, add comment, or create new.
-3. Produce a PLAN (JSON) with fields needed by executors. If a status change is implied, specify desired_state_name or state_category (the executor will map to state_id).
+3. Produce a PLAN (JSON) with fields needed by executors. If a status change is implied, specify desired_state_name or state_category (mapping to state_id will be handled by executors in a later stage outside your scope).
 4. For any FYI-only notes (no Linear change needed), send a concise Slack message to C08KCHMGZV3 summarizing those points.
 
 RULES:
@@ -126,18 +126,18 @@ ${actionItems}
 
 MEETING ID: ${meetingId}
 
-⚠️ CRITICAL WARNING: You MUST call LINEAR_GET_LINEAR_STATES after LINEAR_GET_LINEAR_ISSUES to get state IDs. If you use state names like "Todo" instead of state IDs, ALL operations will fail!
+⚠️ CRITICAL WARNING: You MUST call LINEAR_LIST_LINEAR_STATES after LINEAR_LIST_LINEAR_ISSUES to get state IDs. If you use state names like "Todo" instead of state IDs, ALL operations will fail!
 
 REQUIRED STEPS:
-1. FIRST: Call LINEAR_GET_LINEAR_ISSUES to get current Linear issues
+1. FIRST: Call LINEAR_LIST_LINEAR_ISSUES to get current Linear issues
 2. If Linear connection fails (fallback response), proceed with creating new Linear tickets
 3. Analyze each action item against the existing Linear issues (if available)
 4. Make intelligent decisions about updates vs new Linear tickets vs Slack messages
 5. Provide specific instructions with Linear issue IDs, state IDs (not names), and comments
 
 IMPORTANT:
-- ALWAYS call LINEAR_GET_LINEAR_ISSUES first
-- ALWAYS call LINEAR_GET_LINEAR_STATES second to get state IDs
+- ALWAYS call LINEAR_LIST_LINEAR_ISSUES first
+- ALWAYS call LINEAR_LIST_LINEAR_STATES second to get state IDs
 - Use actual Linear state IDs (like "a6eddfb0-4d5b-4e62-a8d4-c5342233fa80"), not state names (like "Todo")
 - If Linear connection fails, create new Linear tickets for actionable items
 - Look for status updates in the action items (e.g., "this is done", "we're working on this")

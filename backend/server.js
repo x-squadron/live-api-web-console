@@ -1707,8 +1707,14 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req, res) => {
     }
     
     // Step 2: Use MeetingSummarizer's analysis agent to analyze action items with Linear context
+    // Normalize action items to a string to avoid implicit object coercion ("[object Object]")
+    const _items = summaryResult?.actionItems;
+    const _normalizedActionItems =
+      typeof _items === 'string'
+        ? _items
+        : JSON.stringify(_items ?? [], null, 2);
     const analysisResult = await meetingSummarizer.analyzeActionItemsWithContext(
-      summaryResult,
+      _normalizedActionItems || 'No specific action items extracted',
       meetingId
     );
     

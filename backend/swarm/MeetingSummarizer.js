@@ -126,19 +126,18 @@ ${actionItems}
 
 MEETING ID: ${meetingId}
 
-⚠️ CRITICAL WARNING: You MUST call LINEAR_LIST_LINEAR_STATES after LINEAR_LIST_LINEAR_ISSUES to get state IDs. If you use state names like "Todo" instead of state IDs, ALL operations will fail!
+⚠️ NOTE: If a status change is implied, include desired_state_name or state_category only. Do NOT attempt to fetch or use state IDs; executors will handle state_id mapping later.
 
 REQUIRED STEPS:
 1. FIRST: Call LINEAR_LIST_LINEAR_ISSUES to get current Linear issues
 2. If Linear connection fails (fallback response), proceed with creating new Linear tickets
 3. Analyze each action item against the existing Linear issues (if available)
 4. Make intelligent decisions about updates vs new Linear tickets vs Slack messages
-5. Provide specific instructions with Linear issue IDs, state IDs (not names), and comments
+5. Provide specific instructions with Linear issue IDs, and comments. For statuses, include desired_state_name or state_category (no state IDs).
 
 IMPORTANT:
 - ALWAYS call LINEAR_LIST_LINEAR_ISSUES first
-- ALWAYS call LINEAR_LIST_LINEAR_STATES second to get state IDs
-- Use actual Linear state IDs (like "a6eddfb0-4d5b-4e62-a8d4-c5342233fa80"), not state names (like "Todo")
+- Do NOT fetch Linear states. Do not include state IDs; only desired_state_name or state_category hints
 - If Linear connection fails, create new Linear tickets for actionable items
 - Look for status updates in the action items (e.g., "this is done", "we're working on this")
 - Look for assignee changes and priority changes

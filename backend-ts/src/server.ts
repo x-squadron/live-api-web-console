@@ -1,11 +1,14 @@
 import 'dotenv/config';
+// Initialize OpenTelemetry before any other imports
+import './utils/openTelemetry.js';
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
 import { A2AClient } from '@artinet/sdk';
 import { startSummarizerA2AServer } from './a2a/summarizerAgent.js';
 import { startSlackA2AServer } from './a2a/slackAgent.js';
+import { taskStore } from './services/taskStore.js';
 import { AgentRegistry } from './a2a/registry.js';
-import { checkIdempotency } from './utils/idempotency.js';
+import { checkIdempotency, checkTaskStoreIdempotency } from './utils/idempotency.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -49,12 +52,16 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req: Request, re
     const meetingId = String(parse.data.native_meeting_id || parse.data.id);
     const endTime = String(parse.data.end_time || '');
     
-    // Check idempotency using utility function
-    const { isDuplicate, idempotencyKey } = await checkIdempotency(meetingId, endTime);
-    
-    if (isDuplicate) {
-      return res.status(409).json({ success: false, error: 'duplicate', idempotencyKey });
+    // Independent checks: TaskStore and Redis
+    const { isDuplicate: isTS, idempotencyKey: idemTS, taskId } = await checkTaskStoreIdempotency(meetingId, endTime);
+    if (isTS) {
+      return res.status(409).json({ success: false, error: 'duplicate_taskstore', idempotencyKey: idemTS });
     }
+
+    /* const { isDuplicate: isRedis, idempotencyKey: idemRedis } = await checkIdempotency(meetingId, endTime);
+    if (isRedis) {
+      return res.status(409).json({ success: false, error: 'duplicate_redis', idempotencyKey: idemRedis });
+    } */
 
     // Return 202 immediately after idempotency check passes
     res.status(202).json({ success: true, accepted: true });
@@ -67,7 +74,8 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req: Request, re
     setImmediate(() => {
       client
         .sendTask({
-          id: `sum-${meetingId}-${Date.now()}`,
+          // Deterministic, filesystem-safe task id
+          id: taskId,
           message: {
             role: 'user',
             parts: [
@@ -84,15 +92,15 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req: Request, re
     return res.status(500).json({ success: false, error: e?.message || String(e) });
   }
 });
-
+ 
 const port = Number(process.env.PORT || 5050);
 app.listen(port, () => {
   console.log(`[summary-service] listening on :${port}`);
 });
 
-// Start A2A agent servers
-startSummarizerA2AServer();
-startSlackA2AServer();
+// Start A2A agent servers with shared in-memory task store
+startSummarizerA2AServer(undefined, undefined, taskStore);
+startSlackA2AServer(undefined, undefined, taskStore);
 
 // Build registry of known agents for dynamic discovery
 const publicHost = process.env.PUBLIC_HOST || 'http://localhost';

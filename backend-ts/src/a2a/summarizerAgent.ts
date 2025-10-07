@@ -3,6 +3,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { MemorySaver } from '@langchain/langgraph';
 import { a2aSendTaskBySkill, a2aDiscoverAgents } from '../tools/a2aTools.js';
+import { langfuseHandler } from '../utils/langfuse.js';
 
 const llm = new ChatOpenAI({
   model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -16,7 +17,8 @@ const system = `Tu es un agent de résumé. Produis un texte final en FRANÇAIS 
 🧭 Summary
 Respecte le format, concis et professionnel.
 
-IMPORTANT: Après avoir généré le résumé, utilise A2A_DISCOVER_AGENTS pour trouver l'agent Slack, puis utilise A2A_SEND_TASK_BY_SKILL avec skill_id "send_slack_message" pour envoyer le résumé sur Slack.`;
+IMPORTANT: Après avoir généré le résumé, utilise A2A_DISCOVER_AGENTS pour trouver l'agent Slack, puis utilise A2A_SEND_TASK_BY_SKILL avec skill_id "send_slack_message" pour envoyer le résumé sur Slack.
+CONTRAINTE: N'inclus JAMAIS de canal Slack (meta.channel). N'invente pas de canal. L'agent Slack choisira le canal par défaut depuis la configuration.`;
 
 function buildUserPrompt(meetingId: string, url: string | undefined, transcript: string): string {
   return `MEETING ID: ${meetingId}
@@ -73,8 +75,10 @@ async function* summarizerHandler(context: TaskContext): AsyncGenerator<TaskYiel
           console.log('[summarizer] Tool end', { meetingId, outputPreview: preview });
         } catch {}
       },
-      handleChainError: (e: any) => { try { console.error('[summarizer] agent error', { meetingId, error: e?.message || String(e) }); } catch {} },
-    }];
+      handleChainError: (e: any) => { try { console.error('[summarizer] agent error', { meetingId, error: e?.message || String(e) }); } catch {} }
+    }, langfuseHandler];
+
+    console.log(callbacks)
 
     const res = await summarizerAgent.invoke(
       { messages: [{ role: 'user', content: userPrompt }] },
@@ -98,10 +102,11 @@ async function* summarizerHandler(context: TaskContext): AsyncGenerator<TaskYiel
   }
 }
 
-export function startSummarizerA2AServer(port = Number(process.env.SUMMARIZER_A2A_PORT || 4001), basePath = '/a2a') {
+export function startSummarizerA2AServer(port = Number(process.env.SUMMARIZER_A2A_PORT || 4001), basePath = '/a2a', taskStore?: any) {
   const publicHost = process.env.PUBLIC_HOST || 'http://localhost';
   const server = new A2AServer({
     handler: summarizerHandler as any,
+    taskStore: taskStore as any,
     port,
     basePath,
     card: {

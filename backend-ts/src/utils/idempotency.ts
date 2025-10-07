@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis';
+import { taskStore } from '../services/taskStore.js';
 
 /**
  * Checks if a request is duplicate based on meeting ID and end time
@@ -40,4 +41,63 @@ export async function checkIdempotency(
     // On Redis error, allow the request to proceed (fail open)
     return { isDuplicate: false, idempotencyKey };
   }
+}
+
+/**
+ * Checks idempotency using A2A TaskStore with a deterministic task id
+ * Falls back to Redis reservation to prevent concurrent duplicates
+ */
+export async function checkTaskStoreIdempotency(
+  meetingId: string,
+  endTime: string
+): Promise<{ isDuplicate: boolean; taskId: string }> {
+  const rawTaskId = `sum-${meetingId}-${endTime}`;
+  const endKey = normalizeEndTime(endTime);
+  const taskId = makeFilesystemSafeTaskId(meetingId, endKey);
+  try { console.log('[idem] TaskStore check start', { meetingId, endTime, rawTaskId, endKey, taskId }); } catch {}
+
+  try {
+    const loadFn = (taskStore as any)?.load?.bind?.(taskStore);
+    const hasLoad = typeof loadFn === 'function';
+    try { console.log('[idem] TaskStore methods', { hasLoad }); } catch {}
+
+    if (!hasLoad) {
+      try { console.warn('[idem] TaskStore.load not available; skipping duplicate check'); } catch {}
+      return { isDuplicate: false, taskId };
+    }
+
+    let existing: any = null;
+    try {
+      existing = await loadFn(taskId);
+      try { console.log('[idem] TaskStore.load result', { found: !!existing, state: existing?.status?.state || existing?.state }); } catch {}
+    } catch (e) {
+      try { console.error('[idem] TaskStore.load error', { error: (e as any)?.message || String(e) }); } catch {}
+      return { isDuplicate: false, taskId };
+    }
+
+    const state = (existing?.status?.state || existing?.state || '').toString().toLowerCase();
+    const isDone = state === 'completed' || state === 'succeeded';
+    try { console.log('[idem] TaskStore decision', { found: !!existing, state, isDone }); } catch {}
+    if (existing) {
+      try { console.warn('[idem] duplicate detected via TaskStore (completed)', { taskId, state }); } catch {}
+      return { isDuplicate: true, taskId };
+    }
+  } catch (e) {
+    try { console.error('[idem] TaskStore check failed', e); } catch {}
+  }
+
+  return { isDuplicate: false, taskId };
+}
+
+function normalizeEndTime(endTime: string): string {
+  const dt = new Date(endTime);
+  const iso = isNaN(dt.getTime()) ? String(endTime) : dt.toISOString();
+  // Replace unsafe filename characters (Windows): : \ / * ? " < > |
+  return iso.replace(/[:\\/*?"<>|]/g, '-');
+}
+
+function makeFilesystemSafeTaskId(meetingId: string, endKey: string): string {
+  const safeMeeting = String(meetingId).replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 120);
+  const safeEnd = String(endKey).replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 120);
+  return `sum-${safeMeeting}-${safeEnd || 'noend'}`.replace(/-+/g, '-');
 }

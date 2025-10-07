@@ -21,9 +21,8 @@ export const slackSendMessage: any = toolAny(
   async (args: any) => {
     console.log('[tool] SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL invoked');
     const normalized: any = { ...args };
-    if (!normalized.channel || typeof normalized.channel !== 'string' || normalized.channel.trim() === '') {
-      normalized.channel = process.env.SLACK_DEFAULT_CHANNEL || 'C08KCHMGZV3';
-    }
+    // Always use env default channel; ignore any provided channel
+    normalized.channel = process.env.SLACK_DEFAULT_CHANNEL || 'C08KCHMGZV3';
     if (typeof normalized.text !== 'string') normalized.text = String(normalized.text ?? '');
     console.log('[tool] slack params', { channel: normalized.channel, textPreview: String(normalized.text).slice(0, 120) });
     return executeComposioTool('SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL', normalized);

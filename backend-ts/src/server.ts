@@ -53,9 +53,9 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req: Request, re
     const endTime = String(parse.data.end_time || '');
     
     // Independent checks: TaskStore and Redis
-    const { isDuplicate: isTS, idempotencyKey: idemTS, taskId } = await checkTaskStoreIdempotency(meetingId, endTime);
+    const { isDuplicate: isTS, taskId } = await checkTaskStoreIdempotency(meetingId, endTime);
     if (isTS) {
-      return res.status(409).json({ success: false, error: 'duplicate_taskstore', idempotencyKey: idemTS });
+      return res.status(409).json({ success: false, error: 'duplicate_taskstore' });
     }
 
     /* const { isDuplicate: isRedis, idempotencyKey: idemRedis } = await checkIdempotency(meetingId, endTime);

@@ -18,10 +18,12 @@ const system = `Tu es un agent de résumé. Produis un texte final en FRANÇAIS 
 Respecte le format, concis et professionnel.
 
 IMPORTANT: Après avoir généré le résumé, utilise A2A_DISCOVER_AGENTS pour trouver l'agent Slack, puis utilise A2A_SEND_TASK_BY_SKILL avec skill_id "send_slack_message" pour envoyer le résumé sur Slack.
-CONTRAINTE: N'inclus JAMAIS de canal Slack (meta.channel). N'invente pas de canal. L'agent Slack choisira le canal par défaut depuis la configuration.`;
+CONTRAINTE: N'inclus JAMAIS de canal Slack (meta.channel). N'invente pas de canal. L'agent Slack choisira le canal par défaut depuis la configuration.
+CRITIQUE: Tu DOIS inclure meetingId et endTime dans meta pour permettre l'idempotence. Utilise les valeurs du MEETING ID et end_time du prompt.`;
 
-function buildUserPrompt(meetingId: string, url: string | undefined, transcript: string): string {
+function buildUserPrompt(meetingId: string, endTime: string, url: string | undefined, transcript: string): string {
   return `MEETING ID: ${meetingId}
+END TIME: ${endTime}
 ${url ? `MEETING URL: ${url}\n` : ''}
 
 TRANSCRIPT:\n${transcript}\n\nTâche: produire le résumé structuré EXACTEMENT selon le format et emojis.`;
@@ -53,6 +55,7 @@ async function* summarizerHandler(context: TaskContext): AsyncGenerator<TaskYiel
     const firstText = userParts.find((p: any) => p?.type === 'text')?.text || '';
     const payload = JSON.parse(firstText || '{}');
     const meetingId = String(payload.meetingId || 'unknown');
+    const endTime = String(payload.endTime || '');
     const url = payload.url as string | undefined;
     const transcript = String(payload.transcript || '');
 
@@ -61,7 +64,7 @@ async function* summarizerHandler(context: TaskContext): AsyncGenerator<TaskYiel
       message: { role: 'agent', parts: [{ type: 'text', text: 'Génération du résumé...' }] }
     } as any;
 
-    const userPrompt = buildUserPrompt(meetingId, url, transcript);
+    const userPrompt = buildUserPrompt(meetingId, endTime, url, transcript);
     const callbacks: any = [{
       handleToolStart: (tool: any, input: any) => {
         const name = resolveToolName(tool);
@@ -77,8 +80,6 @@ async function* summarizerHandler(context: TaskContext): AsyncGenerator<TaskYiel
       },
       handleChainError: (e: any) => { try { console.error('[summarizer] agent error', { meetingId, error: e?.message || String(e) }); } catch {} }
     }, langfuseHandler];
-
-    console.log(callbacks)
 
     const res = await summarizerAgent.invoke(
       { messages: [{ role: 'user', content: userPrompt }] },

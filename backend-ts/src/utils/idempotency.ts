@@ -50,46 +50,74 @@ export async function checkIdempotency(
 export async function checkTaskStoreIdempotency(
   meetingId: string,
   endTime: string
-): Promise<{ isDuplicate: boolean; taskId: string }> {
+): Promise<{ isDuplicate: boolean; taskId: string; canContinue?: boolean }> {
   const rawTaskId = `sum-${meetingId}-${endTime}`;
   const endKey = normalizeEndTime(endTime);
   const taskId = makeFilesystemSafeTaskId(meetingId, endKey);
-  try { console.log('[idem] TaskStore check start', { meetingId, endTime, rawTaskId, endKey, taskId }); } catch {}
-
+  
   try {
     const loadFn = (taskStore as any)?.load?.bind?.(taskStore);
-    const hasLoad = typeof loadFn === 'function';
-    try { console.log('[idem] TaskStore methods', { hasLoad }); } catch {}
-
-    if (!hasLoad) {
-      try { console.warn('[idem] TaskStore.load not available; skipping duplicate check'); } catch {}
+    if (typeof loadFn !== 'function') {
       return { isDuplicate: false, taskId };
     }
 
-    let existing: any = null;
+    // Check both summarizer and slack task states
+    const summarizerTaskId = taskId;
+    const normalizedEndTime = normalizeEndTime(endTime);
+    const slackTaskId = `send_slack_message-${meetingId}-${normalizedEndTime}`.replace(/[^a-zA-Z0-9._-]+/g, '-');
+    
+    let summarizerTask: any = null;
+    let slackTask: any = null;
+    
     try {
-      existing = await loadFn(taskId);
-      try { console.log('[idem] TaskStore.load result', { found: !!existing, state: existing?.status?.state || existing?.state }); } catch {}
+      summarizerTask = await loadFn(summarizerTaskId);
     } catch (e) {
-      try { console.error('[idem] TaskStore.load error', { error: (e as any)?.message || String(e) }); } catch {}
-      return { isDuplicate: false, taskId };
+      // Summarizer task doesn't exist yet
+    }
+    
+    try {
+      slackTask = await loadFn(slackTaskId);
+    } catch (e) {
+      // Slack task doesn't exist yet
     }
 
-    const state = (existing?.status?.state || existing?.state || '').toString().toLowerCase();
-    const isDone = state === 'completed' || state === 'succeeded';
-    try { console.log('[idem] TaskStore decision', { found: !!existing, state, isDone }); } catch {}
-    if (existing) {
-      try { console.warn('[idem] duplicate detected via TaskStore (completed)', { taskId, state }); } catch {}
+    const getTaskState = (task: any): string => {
+      const stateRaw = task?.task?.status?.state || task?.status?.state || task?.state || '';
+      return String(stateRaw).toLowerCase();
+    };
+
+    const summarizerState = getTaskState(summarizerTask);
+    const slackState = getTaskState(slackTask);
+    
+    const summarizerDone = summarizerState === 'completed' || summarizerState === 'succeeded';
+    const slackDone = slackState === 'completed' || slackState === 'succeeded';
+    
+    console.log('[idem] Task states', { 
+      summarizer: { exists: !!summarizerTask, state: summarizerState, done: summarizerDone },
+      slack: { exists: !!slackTask, state: slackState, done: slackDone }
+    });
+
+    // If both tasks are completed, it's a duplicate
+    if (summarizerDone && slackDone) {
+      console.warn('[idem] duplicate detected - both tasks completed', { summarizerTaskId, slackTaskId });
       return { isDuplicate: true, taskId };
     }
-  } catch (e) {
-    try { console.error('[idem] TaskStore check failed', e); } catch {}
-  }
 
-  return { isDuplicate: false, taskId };
+    // If summarizer is done but slack isn't, we can continue from slack
+    if (summarizerDone && !slackDone) {
+      console.log('[idem] can continue - summarizer done, slack pending', { summarizerTaskId, slackTaskId });
+      return { isDuplicate: false, taskId, canContinue: true };
+    }
+
+    // If summarizer is not done, proceed normally
+    return { isDuplicate: false, taskId };
+  } catch (e) {
+    console.error('[idem] TaskStore check failed', e);
+    return { isDuplicate: false, taskId };
+  }
 }
 
-function normalizeEndTime(endTime: string): string {
+export function normalizeEndTime(endTime: string): string {
   const dt = new Date(endTime);
   const iso = isNaN(dt.getTime()) ? String(endTime) : dt.toISOString();
   // Replace unsafe filename characters (Windows): : \ / * ? " < > |

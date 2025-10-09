@@ -22,14 +22,35 @@ async function* slackHandler(context: TaskContext): AsyncGenerator<TaskYieldUpda
   try {
     const userParts = (context as any)?.userMessage?.parts || (context as any)?.task?.status?.message?.parts || [];
     const text = userParts?.[0]?.text || '';
+    
+    // Extract meetingId and endTime from the second part (meta JSON)
+    let meetingId = 'unknown';
+    let endTime = Date.now().toString();
+    
+    if (userParts.length > 1) {
+      try {
+        const metaStr = userParts[1]?.text || '';
+        const meta = JSON.parse(metaStr);
+        meetingId = meta.meetingId || 'unknown';
+        endTime = meta.endTime || Date.now().toString();
+      } catch (e) {
+        console.warn('[a2a:slack] failed to parse meta', e);
+      }
+    }
 
     yield { state: 'working', message: { role: 'agent', parts: [{ type: 'text', text: 'Envoi à Slack...' }] } } as any;
-    console.log('[a2a:slack] sending', { channel: process.env.SLACK_DEFAULT_CHANNEL || 'C08KCHMGZV3', textPreview: String(text).slice(0, 160) });
+    console.log('[a2a:slack] sending', { 
+      channel: process.env.SLACK_DEFAULT_CHANNEL || 'C08KCHMGZV3', 
+      textPreview: String(text).slice(0, 160),
+      meetingId,
+      endTime
+    });
+    
     const res = await slackAgent.invoke(
       { messages: [
         { role: 'user', content: `TEXTE_A_ENVOYER:\n${text}` }
       ]},
-      { configurable: { thread_id: `slack-${Date.now()}` }, callbacks: [langfuseHandler] }
+      { configurable: { thread_id: `slack-${meetingId}-${endTime}` }, callbacks: [langfuseHandler] }
     );
     console.log('[a2a:slack] agent result', JSON.stringify(res).slice(0, 200));
 

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { tool } from '@langchain/core/tools';
 import { A2AClient } from '@artinet/sdk';
+import { normalizeEndTime } from '../utils/idempotency.js';
 
 // Removed discoverAgentUrlBySkill - now using A2A_DISCOVER_AGENTS tool instead
 
@@ -76,8 +77,14 @@ export const a2aSendTaskBySkill: any = toolAny(
     try { console.log('[tool:a2a] sendTask', { skill_id, agent_url, textLength: textStr.length, meta: { channel: metaObj?.channel ?? null } }); } catch {}
 
     try {
+      // Extract meetingId and endTime from meta for deterministic task ID
+      const meetingId = metaObj?.meetingId || 'unknown';
+      const rawEndTime = metaObj?.endTime || Date.now().toString();
+      const normalizedEndTime = normalizeEndTime(rawEndTime);
+      const deterministicId = `${skill_id}-${meetingId}-${normalizedEndTime}`.replace(/[^a-zA-Z0-9._-]+/g, '-');
+      
       const resp: any = await client.sendTask({
-        id: `tool-${skill_id}-${Date.now()}`,
+        id: deterministicId,
         message: {
           role: 'user',
           parts: [

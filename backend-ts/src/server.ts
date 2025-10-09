@@ -8,7 +8,7 @@ import { startSummarizerA2AServer } from './a2a/summarizerAgent.js';
 import { startSlackA2AServer } from './a2a/slackAgent.js';
 import { taskStore } from './services/taskStore.js';
 import { AgentRegistry } from './a2a/registry.js';
-import { checkIdempotency, checkTaskStoreIdempotency } from './utils/idempotency.js';
+import { checkIdempotency, checkTaskStoreIdempotency, normalizeEndTime } from './utils/idempotency.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -52,8 +52,8 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req: Request, re
     const meetingId = String(parse.data.native_meeting_id || parse.data.id);
     const endTime = String(parse.data.end_time || '');
     
-    // Independent checks: TaskStore and Redis
-    const { isDuplicate: isTS, taskId } = await checkTaskStoreIdempotency(meetingId, endTime);
+    // Check TaskStore idempotency for both summarizer and slack tasks
+    const { isDuplicate: isTS, taskId, canContinue } = await checkTaskStoreIdempotency(meetingId, endTime);
     if (isTS) {
       return res.status(409).json({ success: false, error: 'duplicate_taskstore' });
     }
@@ -64,27 +64,52 @@ app.post('/api/multi-swarm/process-transcript-workflow', async (req: Request, re
     } */
 
     // Return 202 immediately after idempotency check passes
-    res.status(202).json({ success: true, accepted: true });
+    res.status(202).json({ success: true, accepted: true, canContinue });
 
-    // Fire-and-forget A2A call to Summarizer
     const payload = parse.data;
-    const summarizerUrl = process.env.SUMMARIZER_A2A_URL || `${process.env.PUBLIC_HOST || 'http://localhost'}:${process.env.SUMMARIZER_A2A_PORT || 4001}/a2a`;
-    const client = new A2AClient(summarizerUrl);
     
-    setImmediate(() => {
-      client
-        .sendTask({
-          // Deterministic, filesystem-safe task id
-          id: taskId,
-          message: {
-            role: 'user',
-            parts: [
-              { type: 'text', text: JSON.stringify({ meetingId, url: payload.constructed_meeting_url, transcript: payload.text || '' }) }
-            ]
-          }
-        } as any)
-        .catch((e: any) => console.error('[api] summarizer A2A error (async)', e));
-    });
+    if (canContinue) {
+      // Summarizer is done, continue with slack task only
+      console.log('[api] continuing with slack task only');
+      const slackUrl = process.env.SLACK_A2A_URL || `${process.env.PUBLIC_HOST || 'http://localhost'}:${process.env.SLACK_A2A_PORT || 4002}/a2a`;
+      const slackClient = new A2AClient(slackUrl);
+      const normalizedEndTime = normalizeEndTime(endTime);
+      const slackTaskId = `send_slack_message-${meetingId}-${normalizedEndTime}`.replace(/[^a-zA-Z0-9._-]+/g, '-');
+      
+      setImmediate(() => {
+        slackClient
+          .sendTask({
+            id: slackTaskId,
+            message: {
+              role: 'user',
+              parts: [
+                { type: 'text', text: 'Continue from previous summary' },
+                { type: 'text', text: JSON.stringify({ meetingId, endTime }) }
+              ]
+            }
+          } as any)
+          .catch((e: any) => console.error('[api] slack A2A error (async)', e));
+      });
+    } else {
+      // Normal flow: start with summarizer
+      const summarizerUrl = process.env.SUMMARIZER_A2A_URL || `${process.env.PUBLIC_HOST || 'http://localhost'}:${process.env.SUMMARIZER_A2A_PORT || 4001}/a2a`;
+      const client = new A2AClient(summarizerUrl);
+      
+      setImmediate(() => {
+        client
+          .sendTask({
+            // Deterministic, filesystem-safe task id
+            id: taskId,
+            message: {
+              role: 'user',
+              parts: [
+                { type: 'text', text: JSON.stringify({ meetingId, url: payload.constructed_meeting_url, transcript: payload.text || '', endTime }) }
+              ]
+            }
+          } as any)
+          .catch((e: any) => console.error('[api] summarizer A2A error (async)', e));
+      });
+    }
     
     return;
   } catch (e: any) {

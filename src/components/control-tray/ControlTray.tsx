@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+//ControlTray.tsx
 import cn from "classnames";
 
 import { memo, ReactNode, RefObject, useEffect, useRef, useState } from "react";
@@ -25,6 +26,8 @@ import { AudioRecorder } from "../../lib/audio-recorder";
 import AudioPulse from "../audio-pulse/AudioPulse";
 import "./control-tray.scss";
 import SettingsDialog from "../settings-dialog/SettingsDialog";
+import ComposioButton from "../composio-button/composioButton";
+import AgentsButton from "../agents/AgentsButton";
 
 export type ControlTrayProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -213,6 +216,8 @@ function ControlTray({
         </div>
         <span className="text-indicator">Streaming</span>
       </div>
+      <ComposioButton />
+      <AgentsButton />
       {enableEditingSettings ? <SettingsDialog /> : ""}
     </section>
   );

@@ -1,3 +1,4 @@
+//SettingsDialog.tsx
 import {
   ChangeEvent,
   FormEventHandler,

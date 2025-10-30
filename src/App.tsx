@@ -61,7 +61,9 @@ function App() {
   // Initialize composio toolset and model (runs once)
   useEffect(() => {
     console.log("[App] init");
-    setModel("models/gemini-2.5-flash-preview-native-audio-dialog");
+    // setModel("models/gemini-live-2.5-flash-preview");
+    // setModel("models/gemini-2.5-flash");
+    setModel("models/gemini-live-2.5-flash");
   }, [setModel]);
 
   // Update tools configuration whenever selectedTools changes
@@ -91,10 +93,7 @@ function App() {
       // Always load A2A tools (discover_agents, delegate_to_agent) even if no Composio tools selected
       // This ensures agent discovery is always available
       let composioTools: Tool[] = [];
-      composioTools = await getDefaultTools(
-        composioToolset,
-        selectedToolNames
-      );
+      composioTools = await getDefaultTools(composioToolset, selectedToolNames);
 
       setConfig((config: LiveConnectConfig) => {
         // Get existing tools from config
@@ -149,14 +148,14 @@ function App() {
                 .join("\n                       ")
             : "";
 
-        const currentDateTime = new Date().toLocaleString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          timeZoneName: 'short'
+        const currentDateTime = new Date().toLocaleString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZoneName: "short",
         });
 
         const systemInstructionText =
@@ -184,13 +183,14 @@ Use this information to correctly interpret relative time references like "tomor
 ## Core Principles:
 - Always use available tools when they can help accomplish the user's request
 - You can call multiple tools in sequence or parallel when needed
-- Provide clear explanations of what you're doing and why
 - Never invent data - only use real information from tool responses
 
 ## Available Tools:
 
 ### Multi-Agent System:
-${process.env.REACT_APP_A2A_ENABLED === 'true' ? `
+${
+  process.env.REACT_APP_A2A_ENABLED === "true"
+    ? `
 - **discover_agents**: Find available specialized agents for specific apps/domains
 - **delegate_to_agent**: Delegate complex tasks to specialized agents when appropriate
 
@@ -239,7 +239,9 @@ When users ask about app-specific tasks (Google Calendar, Gmail, Linear, Slack, 
 - **DO NOT generate or execute code under any circumstances** - you are only responsible for delegating tasks and providing text responses
 - **NEVER use code execution tools** - if you feel the need to calculate something, delegate it to a specialized agent instead
 - **STRICTLY TEXT RESPONSES ONLY** - do not attempt any code generation or execution
-` : ''}
+`
+    : ""
+}
 
 ### Built-in Capabilities:
 ${toolsList}
@@ -319,16 +321,16 @@ User: "Yes, go ahead"
 
   // Handle A2A agent lifecycle based on app activation/deactivation
   useEffect(() => {
-    const isA2AEnabled = process.env.REACT_APP_A2A_ENABLED === 'true';
+    const isA2AEnabled = process.env.REACT_APP_A2A_ENABLED === "true";
 
     if (!isA2AEnabled) {
-      console.log('[App] A2A is disabled, skipping agent lifecycle management');
+      console.log("[App] A2A is disabled, skipping agent lifecycle management");
       return;
     }
 
     const handleAgentLifecycle = async () => {
-      console.log('[App] Managing A2A agent lifecycle');
-      
+      console.log("[App] Managing A2A agent lifecycle");
+
       const createAgentUsecase = new CreateDynamicAgent();
       const destroyAgentUsecase = new DestroyDynamicAgent();
 
@@ -340,16 +342,22 @@ User: "Yes, go ahead"
         if (isAppActivated && toolNames.length > 0) {
           // App is activated with tools - create agent if it doesn't exist
           try {
-            console.log(`[App] Creating A2A agent for ${appName} with tools:`, toolNames);
-            
+            console.log(
+              `[App] Creating A2A agent for ${appName} with tools:`,
+              toolNames
+            );
+
             await createAgentUsecase.execute(
               {
                 appName: appName,
-                toolNames: toolNames
+                toolNames: toolNames,
               },
               {
                 onSuccess: (agentInfo) => {
-                  console.log(`[App] Successfully created/found agent for ${appName}:`, agentInfo.id);
+                  console.log(
+                    `[App] Successfully created/found agent for ${appName}:`,
+                    agentInfo.id
+                  );
                   toast.show(
                     <Alert type="success">
                       {`🤖 ${appName} specialist agent activated`}
@@ -358,32 +366,40 @@ User: "Yes, go ahead"
                   );
                 },
                 onError: (error) => {
-                  console.error(`[App] Failed to create agent for ${appName}:`, error);
+                  console.error(
+                    `[App] Failed to create agent for ${appName}:`,
+                    error
+                  );
                   toast.show(
                     <Alert type="error">
                       {`Failed to activate ${appName} agent: ${error.message}`}
                     </Alert>,
                     { timeout: 5000 }
                   );
-                }
+                },
               }
             );
           } catch (error) {
-            console.error(`[App] Error in agent creation for ${appName}:`, error);
+            console.error(
+              `[App] Error in agent creation for ${appName}:`,
+              error
+            );
           }
         } else {
           // App is deactivated or has no tools - destroy agent if it exists
           try {
             console.log(`[App] Destroying A2A agent for ${appName}`);
-            
+
             await destroyAgentUsecase.execute(
               {
-                appName: appName
+                appName: appName,
               },
               {
                 onSuccess: (destroyedCount) => {
                   if (destroyedCount > 0) {
-                    console.log(`[App] Successfully destroyed ${destroyedCount} agents for ${appName}`);
+                    console.log(
+                      `[App] Successfully destroyed ${destroyedCount} agents for ${appName}`
+                    );
                     toast.show(
                       <Alert type="success">
                         {`🤖 ${appName} specialist agent deactivated`}
@@ -393,12 +409,18 @@ User: "Yes, go ahead"
                   }
                 },
                 onError: (error) => {
-                  console.error(`[App] Failed to destroy agents for ${appName}:`, error);
-                }
+                  console.error(
+                    `[App] Failed to destroy agents for ${appName}:`,
+                    error
+                  );
+                },
               }
             );
           } catch (error) {
-            console.error(`[App] Error in agent destruction for ${appName}:`, error);
+            console.error(
+              `[App] Error in agent destruction for ${appName}:`,
+              error
+            );
           }
         }
       }
@@ -406,7 +428,7 @@ User: "Yes, go ahead"
 
     // Debounce the agent lifecycle management to avoid too frequent updates
     const timeoutId = setTimeout(handleAgentLifecycle, 1000);
-    
+
     return () => {
       clearTimeout(timeoutId);
     };
@@ -430,33 +452,34 @@ User: "Yes, go ahead"
           };
           let handled = true;
 
-          if (fCall.name === "discover_agents" || fCall.name === "delegate_to_agent") {
+          if (
+            fCall.name === "discover_agents" ||
+            fCall.name === "delegate_to_agent"
+          ) {
             // Handle A2A delegation tools - the only tools the host agent executes
             try {
               console.log(`[App] Host agent handling A2A tool: ${fCall.name}`);
               const response = await handleA2AToolCall(fCall.name, fCall.args);
               functionResponse.response!.data = response;
-              
+
               // Show success message for A2A delegation
               toast.show(
                 <Alert type="success">
-                  {fCall.name === "discover_agents" 
+                  {fCall.name === "discover_agents"
                     ? `🔍 Discovered ${response.agents?.length || 0} specialized agents`
-                    : `🤖 Task delegated to specialized agent`
-                  }
+                    : `🤖 Task delegated to specialized agent`}
                 </Alert>,
                 { timeout: 3000 }
               );
-              
             } catch (error) {
               console.error(`[App] A2A tool error:`, error);
               functionResponse.response!.data = {
                 error: error instanceof Error ? error.message : String(error),
               };
-              
+
               toast.show(
                 <Alert type="error">
-                  {`❌ A2A delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`}
+                  {`❌ A2A delegation failed: ${error instanceof Error ? error.message : "Unknown error"}`}
                 </Alert>,
                 { timeout: 5000 }
               );
@@ -471,7 +494,11 @@ User: "Yes, go ahead"
           }
 
           if (handled && functionResponse) {
-            console.log(`[App] Host agent handled tool:`, fCall.name, functionResponse);
+            console.log(
+              `[App] Host agent handled tool:`,
+              fCall.name,
+              functionResponse
+            );
             functionResponses.push(functionResponse);
           }
         }

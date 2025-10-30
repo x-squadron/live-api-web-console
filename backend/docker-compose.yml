@@ -8,8 +8,9 @@ services:
     ports:
       - "${PORT:-3001}:3001"
     volumes:
-      - ./logs:/app/logs
+      - ${WORKING_DIR:-./}logs:/app/logs
     restart: unless-stopped
+    tty: true
     # Inherit healthcheck from Dockerfile
     # Optionally override or extend here
     # healthcheck:
@@ -18,4 +19,3 @@ services:
     #   timeout: 3s
     #   retries: 3
     #   start_period: 10s
-

@@ -21,11 +21,12 @@ COPY . .
 # Create a non-root user and ensure permissions
 RUN addgroup -S app && adduser -S app -G app \
   && mkdir -p /app/logs \
-  && chown -R app:app /app
-USER app
+  #&& chown -R app:app /app
 
-# Default port (can be overridden by PORT env)
-EXPOSE 3001
+  #USER app
+
+  # Default port (can be overridden by PORT env)
+  EXPOSE 3001
 
 # Simple healthcheck hitting Express health endpoint
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD \

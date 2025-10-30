@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,13 +16,14 @@
 
 // App.tsx
 import { useEffect, useRef, useState } from "react";
+import cn from "classnames";
 import "./App.scss";
 import { useLiveAPIContext } from "./contexts/LiveAPIContext";
 import { useSelectedToolsContext } from "./contexts/SelectedToolsContext";
 import SidePanel from "./components/side-panel/SidePanel";
 import { Altair } from "./components/altair/Altair";
 import ControlTray from "./components/control-tray/ControlTray";
-import cn from "classnames";
+import { ProactiveAudio } from "./components/proactive-audio/ProactiveAudio"
 import { GenList } from "./components/genlist/GenList";
 import { isFunctionDeclarationsTool } from "./utils/isFunctionDeclarationsTool";
 import { OpenAIToolSet } from "composio-core";
@@ -39,6 +40,9 @@ import {
 import { Alert } from "./components/alerts/Alert";
 import { ToastContainer, toast } from "react-tiny-toast";
 import { COMPOSIO_ENTITY_ID } from "./components/composio-button/composioAppList";
+
+const isDebugMode = process.env.REACT_APP_DEBUG_MODE === "true"
+console.log("env : ", process.env, {isDebugMode})
 
 function App() {
   // this video reference is used for displaying the active stream, whether that is the webcam or screen capture
@@ -58,7 +62,7 @@ function App() {
   // Initialize composio toolset and model (runs once)
   useEffect(() => {
     console.log("[App] init");
-    setModel("models/gemini-live-2.5-flash-preview");
+    setModel("models/gemini-2.5-flash-native-audio-preview-09-2025");
   }, [setModel]);
 
   // Update tools configuration whenever selectedTools changes
@@ -151,6 +155,7 @@ function App() {
           allTools.length > 0
             ? `You are a helpful AI assistant with access to multiple specialized tools and services. Your primary goal is to help users accomplish their tasks efficiently by using the appropriate tools.
 
+${isDebugMode ? `
 ## IMPORTANT: Planning and Approval Workflow
 **BEFORE calling any tools, you MUST:**
 1. **Analyze** the user's request and determine what tools you need to use
@@ -165,6 +170,7 @@ function App() {
    - "Would you like me to adjust anything before I start?"
 4. **Wait for user confirmation** before calling any tools
 5. **Only after approval**, proceed with tool execution
+`:''}
 
 ## Core Principles:
 - Always use available tools when they can help accomplish the user's request
@@ -174,8 +180,10 @@ function App() {
 
 ## Available Tools:
 
+${toolsList?.length > 0 ? `
 ### Built-in Capabilities:
 ${toolsList}
+`:''}
 
 ## Multi-Tool Coordination:
 - When a task requires multiple steps, call tools in logical sequence
@@ -205,9 +213,12 @@ ${toolsList}
 - Be concise but helpful
 - Explain your tool usage when it adds value
 - Focus on accomplishing the user's actual goal
+${isDebugMode ? `
 - **REMEMBER: Always present your plan and get approval BEFORE calling tools**
+`:''}
 - Always respond in the same language as the user's request (English, French, Arabic, etc.)
 
+${isDebugMode ? `
 ## Example Workflow:
 User: "Create a chart showing sales data"
 You: "I understand you want a sales data visualization. Here's my plan:
@@ -218,7 +229,9 @@ You: "I understand you want a sales data visualization. Here's my plan:
 Does this plan look good to you? Should I proceed with creating this visualization?"
 [Wait for user approval]
 User: "Yes, go ahead"
-[Then call the render_altair tool]`
+[Then call the render_altair tool]
+`:''}
+`
             : `You are a helpful AI assistant. Currently no external tools are selected, so please provide general assistance based on your knowledge and reasoning capabilities.`;
 
         return {
@@ -236,7 +249,7 @@ User: "Yes, go ahead"
               },
             ],
           },
-          tools: [{ functionDeclarations: uniqueTools }],
+          tools: [{ functionDeclarations: uniqueTools }, { googleSearch: {} }],
         };
       });
     };
@@ -366,6 +379,7 @@ User: "Yes, go ahead"
             {/* APP goes here */}
             <Altair />
             <GenList />
+            <ProactiveAudio />
             <video
               className={cn("stream", {
                 hidden: !videoRef.current || !videoStream,

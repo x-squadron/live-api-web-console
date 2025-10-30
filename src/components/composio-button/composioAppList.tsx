@@ -3,7 +3,7 @@ import { useState, useMemo, useCallback } from "react";
 import { ComposioToolSet } from "composio-core";
 import "./composio-button.scss";
 import { connectToApp } from "./connectToApp";
-import { useSelectedToolsContext } from "../../contexts/SelectedToolsContext";
+import { useSelectedToolsContext } from "../../liveagent";
 import { useAppListViewModels } from "./viewmodels/useAppListViewModels";
 
 export const COMPOSIO_ENTITY_ID =

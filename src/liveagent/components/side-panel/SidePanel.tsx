@@ -105,8 +105,8 @@ export default function SidePanel() {
               backgroundColor: isFocused
                 ? "var(--Neutral-30)"
                 : isSelected
-                  ? "var(--Neutral-20)"
-                  : undefined,
+                ? "var(--Neutral-20)"
+                : undefined,
             }),
           }}
           defaultValue={selectedOption}

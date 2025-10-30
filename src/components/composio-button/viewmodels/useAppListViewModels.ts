@@ -1,6 +1,7 @@
-import { useDependencies, useSelectedToolsContext } from "@context";
+import { useDependencies } from "@context";
 import { Application, Tool } from "@core/domain";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSelectedToolsContext } from "../../../liveagent";
 
 type ConnectionStatus = "ACTIVE" | "INACTIVE" | "INITIATED" | "EXPIRED";
 

@@ -15,7 +15,7 @@
  */
 import { LiveConnectConfig, Part } from "@google/genai";
 import { memo, useEffect } from "react";
-import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
+import { useLiveAPIContext } from "../../liveagent";
 import "./proactive-audio.scss";
 import { isFunctionDeclarationsTool } from "../../utils/isFunctionDeclarationsTool";
 

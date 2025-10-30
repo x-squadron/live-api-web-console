@@ -18,11 +18,9 @@
 import { useEffect, useRef, useState } from "react";
 import cn from "classnames";
 import "./App.scss";
-import { useLiveAPIContext } from "./contexts/LiveAPIContext";
-import { useSelectedToolsContext } from "./contexts/SelectedToolsContext";
-import SidePanel from "./components/side-panel/SidePanel";
+import { useLiveAPIContext, useSelectedToolsContext, SidePanel, ControlTray} from "./liveagent";
 import { Altair } from "./components/altair/Altair";
-import ControlTray from "./components/control-tray/ControlTray";
+import ComposioButton from "./components/composio-button/composioButton";
 import { ProactiveAudio } from "./components/proactive-audio/ProactiveAudio"
 import { GenList } from "./components/genlist/GenList";
 import { isFunctionDeclarationsTool } from "./utils/isFunctionDeclarationsTool";
@@ -379,7 +377,7 @@ User: "Yes, go ahead"
             {/* APP goes here */}
             <Altair />
             <GenList />
-            <ProactiveAudio />
+            {/* <ProactiveAudio /> */}
             <video
               className={cn("stream", {
                 hidden: !videoRef.current || !videoStream,
@@ -397,6 +395,7 @@ User: "Yes, go ahead"
             enableEditingSettings={true}
           >
             {/* put your own buttons here */}
+            <ComposioButton />
           </ControlTray>
         </main>
       </div>

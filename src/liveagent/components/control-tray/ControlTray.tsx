@@ -26,7 +26,6 @@ import { AudioRecorder } from "../../lib/audio-recorder";
 import AudioPulse from "../audio-pulse/AudioPulse";
 import "./control-tray.scss";
 import SettingsDialog from "../settings-dialog/SettingsDialog";
-import ComposioButton from "../composio-button/composioButton";
 
 export type ControlTrayProps = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -198,7 +197,6 @@ function ControlTray({
             />
           </>
         )}
-        {children}
       </nav>
 
       <div className={cn("connection-container", { connected })}>
@@ -215,7 +213,7 @@ function ControlTray({
         </div>
         <span className="text-indicator">Streaming</span>
       </div>
-      <ComposioButton />
+      {children}
       {enableEditingSettings ? <SettingsDialog /> : ""}
     </section>
   );

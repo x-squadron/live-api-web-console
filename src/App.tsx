@@ -58,7 +58,7 @@ function App() {
   // Initialize composio toolset and model (runs once)
   useEffect(() => {
     console.log("[App] init");
-    setModel("models/gemini-2.5-flash-preview-native-audio-dialog");
+    setModel("models/gemini-live-2.5-flash-preview");
   }, [setModel]);
 
   // Update tools configuration whenever selectedTools changes

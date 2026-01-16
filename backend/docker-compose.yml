@@ -1,0 +1,21 @@
+services:
+  backend:
+    build:
+      context: .
+    container_name: faktions-backend
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-3001}:3001"
+    volumes:
+      - ${WORKING_DIR:-./}logs:/app/logs
+    restart: unless-stopped
+    tty: true
+    # Inherit healthcheck from Dockerfile
+    # Optionally override or extend here
+    # healthcheck:
+    #   test: ["CMD", "curl", "-sf", "http://localhost:${PORT:-3001}/health"]
+    #   interval: 30s
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 10s

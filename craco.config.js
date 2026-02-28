@@ -1,7 +1,14 @@
 const webpack = require("webpack");
 const NodePolyfillPlugin = require("node-polyfill-webpack-plugin");
+const { CracoAliasPlugin } = require("react-app-alias");
 
 module.exports = {
+  plugins: [
+    {
+      plugin: CracoAliasPlugin,
+      options: {},
+    },
+  ],
   webpack: {
     plugins: {
       add: [

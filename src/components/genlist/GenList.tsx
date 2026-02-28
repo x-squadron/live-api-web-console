@@ -23,7 +23,7 @@ import {
   Type,
 } from "@google/genai";
 import { useEffect, useState, useCallback, memo } from "react";
-import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
+import { useLiveAPIContext } from "../../liveagent";
 import { List, ListProps } from "./List";
 import { Chips } from "./Chips";
 import { isFunctionDeclarationsTool } from "../../utils/isFunctionDeclarationsTool";

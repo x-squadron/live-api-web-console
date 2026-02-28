@@ -15,7 +15,7 @@
  */
 import { useEffect, useRef, useState, memo } from "react";
 import vegaEmbed from "vega-embed";
-import { useLiveAPIContext } from "../../contexts/LiveAPIContext";
+import { useLiveAPIContext } from "../../liveagent";
 import {
   FunctionDeclaration,
   LiveConnectConfig,
@@ -141,7 +141,7 @@ function AltairComponent() {
   return (
     <>
       <div className="vega-embed" ref={embedRef} />
-      {jsonString && "Hello Youssef"}
+      {jsonString}
     </>
   );
 }

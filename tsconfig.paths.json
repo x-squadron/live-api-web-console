@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@core/domain": ["src/core/domain/index.ts"],
+      "@core/adapters": ["src/core/adapters/index.ts"],
+      "@core": ["src/core/index.ts"],
+      "@context": ["src/contexts/index.ts"]
+    }
+  }
+}
